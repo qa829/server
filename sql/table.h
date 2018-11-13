@@ -1128,7 +1128,8 @@ public:
   uchar *write_row_record;		/* Used as optimisation in
 					   THD::write_row */
   uchar *insert_values;                  /* used by INSERT ... UPDATE */
-  /* 
+  uchar *key_buffer;                     /* buffer for INSERT/REPLACE*/
+  /*
     Map of keys that can be used to retrieve all data from this table 
     needed by the query without reading the row.
   */
@@ -1563,6 +1564,7 @@ public:
   int period_make_insert(Item *src, Field *dst);
   int insert_portion_of_time(THD *thd, const vers_select_conds_t &period_conds,
                              ha_rows *rows_inserted);
+  bool check_period_overlaps(const KEY *key, const uchar *lhs, const uchar *rhs);
   int delete_row();
   void vers_update_fields();
   void vers_update_end();

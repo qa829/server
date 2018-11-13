@@ -8059,6 +8059,36 @@ int TABLE::insert_portion_of_time(THD *thd,
   return res;
 }
 
+bool TABLE::check_period_overlaps(const KEY *key,
+                                  const uchar *lhs, const uchar *rhs)
+{
+  uint period_key_part_nr= key->user_defined_key_parts - 2;
+  int cmp_res= 0;
+  for (uint part_nr= 0; !cmp_res && part_nr < period_key_part_nr; part_nr++)
+  {
+    Field *f= key->key_part[part_nr].field;
+    cmp_res= f->cmp(f->ptr_in_record(lhs),
+                    f->ptr_in_record(rhs));
+  }
+  if (cmp_res)
+    return false;
+
+  Field *fields[]= {field[s->period.start_fieldno],
+                    field[s->period.end_fieldno]};
+
+  int cmp[2][2]; /* l1 > l2, l1 > r2, r1 > l2, r1 > r2 */
+  for (int i= 0; i < 2; i++)
+  {
+    for (int j= 0; j < 2; j++)
+    {
+      cmp[i][j]= fields[0]->cmp(fields[i]->ptr_in_record(lhs),
+                                fields[j]->ptr_in_record(rhs));
+    }
+  }
+
+  return (cmp[0][0] <= 0 && cmp[1][0] > 0) || (cmp[0][0] >= 0 && cmp[0][1] < 0);
+}
+
 void TABLE::vers_update_fields()
 {
   bitmap_set_bit(write_set, vers_start_field()->field_index);
