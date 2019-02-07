@@ -7933,3 +7933,15 @@ ER_BACKUP_UNKNOWN_STAGE
         eng "Unknown backup stage: '%s'. Stage should be one of START, FLUSH, BLOCK_DDL, BLOCK_COMMIT or END"
 ER_USER_IS_BLOCKED
         eng "User is blocked because of too many credential errors; unblock with 'FLUSH PRIVILEGES'"
+
+ER_PERIOD_TEMPORARY_NOT_ALLOWED
+        eng "Application-time period table cannot be temporary"
+
+ER_PERIOD_TYPES_MISMATCH
+        eng "Fields of PERIOD FOR %`s have different types"
+
+ER_MORE_THAN_ONE_PERIOD
+        eng "Cannot specify more than one application-time period"
+
+ER_PERIOD_FIELD_WRONG_ATTRIBUTES
+        eng "Period field %`s cannot be %s"
