@@ -1033,6 +1033,16 @@ update_begin:
             updated++;
         }
 
+        if (likely(!error) && !record_was_same && table_list->has_period())
+        {
+          store_record(table, record[2]);
+          restore_record(table, record[1]);
+          error= table->insert_portion_of_time(thd,
+                                               table_list->period_conditions,
+                                               &rows_inserted);
+          restore_record(table, record[2]);
+        }
+
         if (unlikely(error) &&
             (!ignore || table->file->is_fatal_error(error, HA_CHECK_ALL)))
         {
@@ -1058,13 +1068,6 @@ update_begin:
       {
         error= 1;
         break;
-      }
-
-      if (need_update && !record_was_same && table_list->has_period())
-      {
-        restore_record(table, record[1]);
-        table->insert_portion_of_time(thd, table_list->period_conditions,
-                                      &rows_inserted);
       }
 
       if (!--limit && using_limit)

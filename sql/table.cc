@@ -3325,7 +3325,7 @@ enum open_frm_error open_table_from_share(THD *thd, TABLE_SHARE *share,
   if (prgflag & (READ_ALL + EXTRA_RECORD))
   {
     records++;
-    if (share->versioned)
+    if (share->versioned || share->period.name)
       records++;
   }
 
