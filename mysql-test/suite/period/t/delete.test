@@ -15,6 +15,8 @@ create or replace table t1 (id int, s date, e date, period for apptime(s,e));
 insert t1 select * from t;
 create or replace table t2 (id int, s date, e date, period for apptime(s,e));
 insert t2 select * from t;
+create or replace table t3 (id int, s date, e date, period for apptime(s,e));
+insert t3 select * from t;
 
 --let $trig_cols=id, s, e
 --let $trig_table=t1
@@ -35,6 +37,15 @@ select * from log_tbl order by id;
 drop trigger tr1del_t2;
 drop trigger tr2del_t2;
 delete from t2 for portion of APPTIME from '2000-01-01' to '2018-01-01';
+select * from log_tbl order by id;
+
+--echo # removing BEFORE INSERT trigger enables internal substitution
+--echo # DELETE+INSERT -> UPDATE, but without any side effects.
+--echo # The optimization is disabled for non-transactional engines
+--let $trig_table=t3
+--source suite/period/create_triggers.inc
+drop trigger tr1ins_t3;
+delete from t3 for portion of APPTIME from '2000-01-01' to '2018-01-01';
 select * from log_tbl order by id;
 
 --echo # multi-table DELETE is not possible

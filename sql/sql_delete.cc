@@ -260,11 +260,8 @@ int update_portion_of_time(THD *thd, TABLE *table,
     return 0;
 
   DBUG_ASSERT(!table->triggers
-              || (!table->triggers->has_triggers(TRG_EVENT_INSERT,
-                                                 TRG_ACTION_BEFORE)
-                  && !table->triggers->has_triggers(TRG_EVENT_INSERT,
-                                                    TRG_ACTION_AFTER)
-                  && !table->triggers->has_delete_triggers()));
+              || !table->triggers->has_triggers(TRG_EVENT_INSERT,
+                                                TRG_ACTION_BEFORE));
 
   int res= 0;
   Item *src= lcond ? period_conds.start.item : period_conds.end.item;
@@ -281,6 +278,9 @@ int update_portion_of_time(THD *thd, TABLE *table,
   if(likely(!res))
     res= table->file->ha_update_row(table->record[1], table->record[0]);
 
+  if (likely(!res) && table->triggers)
+    res= table->triggers->process_triggers(thd, TRG_EVENT_INSERT,
+                                           TRG_ACTION_AFTER, true);
   restore_record(table, record[1]);
 
   if (likely(!res) && lcond && rcond)
@@ -483,14 +483,8 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
       - there should be no delete triggers associated with the table.
   */
 
-  if (Table_triggers_list *trs= table->triggers)
-  {
-    has_triggers= trs->has_delete_triggers();
-    if (table_list->has_period())
-      has_triggers= has_triggers
-                    || trs->has_triggers(TRG_EVENT_INSERT, TRG_ACTION_BEFORE)
-                    || trs->has_triggers(TRG_EVENT_INSERT, TRG_ACTION_AFTER);
-  }
+  has_triggers= table->triggers && table->triggers->has_delete_triggers();
+
   if (!with_select && !using_limit && const_cond_result &&
       (!thd->is_current_stmt_binlog_format_row() &&
        !has_triggers)
@@ -798,13 +792,20 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
   /*
     From SQL2016, Part 2, 15.7 <Effect of deleting rows from base table>,
     General Rules, 8), we can conclude that DELETE FOR PORTTION OF time performs
-    0-2 INSERTS + DELETE. We can substitute INSERT+DELETE with one UPDATE, but
-    only if there are no triggers set.
-    It is also meaningless for system-versioned table
+    0-2 INSERTS + DELETE. We can substitute INSERT+DELETE with one UPDATE, with
+    a condition of no side effects. The side effect is possible if there is a
+    BEFORE INSERT trigger, since it is the only one splitting DELETE and INSERT
+    operations.
+    Another possible side effect is related to tables of non-transactional
+    engines, since UPDATE is anyway atomic, and DELETE+INSERT is not.
+
+    This optimization is not possible for system-versioned table.
   */
-  portion_of_time_through_update= !has_triggers
-                                  && !table->versioned()
-                                  && table->file->has_transactions();
+  portion_of_time_through_update=
+          !(table->triggers && table->triggers->has_triggers(TRG_EVENT_INSERT,
+                                                             TRG_ACTION_BEFORE))
+          && !table->versioned()
+          && table->file->has_transactions();
 
   THD_STAGE_INFO(thd, stage_updating);
   while (likely(!(error=info.read_record())) && likely(!thd->killed) &&
@@ -840,6 +841,12 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
       else
       {
         error= table->delete_row();
+
+        ha_rows rows_inserted;
+        if (likely(!error) && table_list->has_period()
+            && !portion_of_time_through_update)
+          error= table->insert_portion_of_time(thd, table_list->period_conditions,
+                                               &rows_inserted);
       }
 
       if (likely(!error))
@@ -848,22 +855,17 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
         if (!truncate_history && table->triggers &&
             table->triggers->process_triggers(thd, TRG_EVENT_DELETE,
                                               TRG_ACTION_AFTER, FALSE))
+        {
           error= 1;
-
-        if (!--limit && using_limit)
-          error= -1;
-
-        if (error)
           break;
+        }
+	if (!--limit && using_limit)
+	{
+	  error= -1;
+	  break;
+	}
       }
-
-      ha_rows rows_inserted;
-      if (likely(!error) && table_list->has_period()
-          && !portion_of_time_through_update)
-        error= table->insert_portion_of_time(thd, table_list->period_conditions,
-                                             &rows_inserted);
-
-      if (unlikely(error) && error != 1 && error != -1)
+      else
       {
 	table->file->print_error(error,
                                  MYF(thd->lex->ignore ? ME_WARNING : 0));

@@ -10,6 +10,8 @@ create or replace table t1 (id int, s date, e date, period for apptime(s,e));
 insert t1 select * from t;
 create or replace table t2 (id int, s date, e date, period for apptime(s,e));
 insert t2 select * from t;
+create or replace table t3 (id int, s date, e date, period for apptime(s,e));
+insert t3 select * from t;
 delete from t for portion of apptime from '2000-01-01' to '2018-01-01';
 delete from t1 for portion of APPTIME from '2000-01-01' to '2018-01-01';
 select * from t;
@@ -35,33 +37,33 @@ id	s	e
 select * from log_tbl order by id;
 id	log
 1	>DEL: 1, 1999-01-01, 2018-12-12
-2	<DEL: 1, 1999-01-01, 2018-12-12
-3	>INS: 1, 1999-01-01, 2000-01-01
-4	<INS: 1, 1999-01-01, 2000-01-01
-5	>INS: 1, 2018-01-01, 2018-12-12
-6	<INS: 1, 2018-01-01, 2018-12-12
+2	>INS: 1, 1999-01-01, 2000-01-01
+3	<INS: 1, 1999-01-01, 2000-01-01
+4	>INS: 1, 2018-01-01, 2018-12-12
+5	<INS: 1, 2018-01-01, 2018-12-12
+6	<DEL: 1, 1999-01-01, 2018-12-12
 7	>DEL: 1, 1999-01-01, 2017-01-01
-8	<DEL: 1, 1999-01-01, 2017-01-01
-9	>INS: 1, 1999-01-01, 2000-01-01
-10	<INS: 1, 1999-01-01, 2000-01-01
+8	>INS: 1, 1999-01-01, 2000-01-01
+9	<INS: 1, 1999-01-01, 2000-01-01
+10	<DEL: 1, 1999-01-01, 2017-01-01
 11	>DEL: 1, 2017-01-01, 2019-01-01
-12	<DEL: 1, 2017-01-01, 2019-01-01
-13	>INS: 1, 2018-01-01, 2019-01-01
-14	<INS: 1, 2018-01-01, 2019-01-01
+12	>INS: 1, 2018-01-01, 2019-01-01
+13	<INS: 1, 2018-01-01, 2019-01-01
+14	<DEL: 1, 2017-01-01, 2019-01-01
 15	>DEL: 2, 1998-01-01, 2018-12-12
-16	<DEL: 2, 1998-01-01, 2018-12-12
-17	>INS: 2, 1998-01-01, 2000-01-01
-18	<INS: 2, 1998-01-01, 2000-01-01
-19	>INS: 2, 2018-01-01, 2018-12-12
-20	<INS: 2, 2018-01-01, 2018-12-12
+16	>INS: 2, 1998-01-01, 2000-01-01
+17	<INS: 2, 1998-01-01, 2000-01-01
+18	>INS: 2, 2018-01-01, 2018-12-12
+19	<INS: 2, 2018-01-01, 2018-12-12
+20	<DEL: 2, 1998-01-01, 2018-12-12
 21	>DEL: 3, 1997-01-01, 2015-01-01
-22	<DEL: 3, 1997-01-01, 2015-01-01
-23	>INS: 3, 1997-01-01, 2000-01-01
-24	<INS: 3, 1997-01-01, 2000-01-01
+22	>INS: 3, 1997-01-01, 2000-01-01
+23	<INS: 3, 1997-01-01, 2000-01-01
+24	<DEL: 3, 1997-01-01, 2015-01-01
 25	>DEL: 4, 2016-01-01, 2020-01-01
-26	<DEL: 4, 2016-01-01, 2020-01-01
-27	>INS: 4, 2018-01-01, 2020-01-01
-28	<INS: 4, 2018-01-01, 2020-01-01
+26	>INS: 4, 2018-01-01, 2020-01-01
+27	<INS: 4, 2018-01-01, 2020-01-01
+28	<DEL: 4, 2016-01-01, 2020-01-01
 29	>DEL: 5, 2010-01-01, 2015-01-01
 30	<DEL: 5, 2010-01-01, 2015-01-01
 # INSERT trigger only also works
@@ -86,6 +88,35 @@ id	log
 14	<INS: 3, 1997-01-01, 2000-01-01
 15	>INS: 4, 2018-01-01, 2020-01-01
 16	<INS: 4, 2018-01-01, 2020-01-01
+# removing BEFORE INSERT trigger enables internal substitution
+# DELETE+INSERT -> UPDATE, but without any side effects.
+# The optimization is disabled for non-transactional engines
+drop trigger tr1ins_t3;
+delete from t3 for portion of APPTIME from '2000-01-01' to '2018-01-01';
+select * from log_tbl order by id;
+id	log
+1	>DEL: 1999-01-01, 2018-12-12
+2	<INS: 1999-01-01, 2000-01-01
+3	<INS: 2018-01-01, 2018-12-12
+4	<DEL: 1999-01-01, 2018-12-12
+5	>DEL: 1999-01-01, 2017-01-01
+6	<INS: 1999-01-01, 2000-01-01
+7	<DEL: 1999-01-01, 2017-01-01
+8	>DEL: 2017-01-01, 2019-01-01
+9	<INS: 2018-01-01, 2019-01-01
+10	<DEL: 2017-01-01, 2019-01-01
+11	>DEL: 1998-01-01, 2018-12-12
+12	<INS: 1998-01-01, 2000-01-01
+13	<INS: 2018-01-01, 2018-12-12
+14	<DEL: 1998-01-01, 2018-12-12
+15	>DEL: 1997-01-01, 2015-01-01
+16	<INS: 1997-01-01, 2000-01-01
+17	<DEL: 1997-01-01, 2015-01-01
+18	>DEL: 2016-01-01, 2020-01-01
+19	<INS: 2018-01-01, 2020-01-01
+20	<DEL: 2016-01-01, 2020-01-01
+21	>DEL: 2010-01-01, 2015-01-01
+22	<DEL: 2010-01-01, 2015-01-01
 # multi-table DELETE is not possible
 delete t, t1 from t1, t for portion of apptime from '2000-01-01' to '2018-01-01';
 ERROR 42000: You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'for portion of apptime from '2000-01-01' to '2018-01-01'' at line 1
@@ -144,11 +175,11 @@ id	s	e
 select * from log_tbl order by id;
 id	log
 1	>DEL: 1999-01-01, 2018-12-12
-2	<DEL: 1999-01-01, 2018-12-12
-3	>INS: 1999-01-01, 2000-01-01
-4	<INS: 1999-01-01, 2000-01-01
-5	>INS: 2018-01-01, 2018-12-12
-6	<INS: 2018-01-01, 2018-12-12
+2	>INS: 1999-01-01, 2000-01-01
+3	<INS: 1999-01-01, 2000-01-01
+4	>INS: 2018-01-01, 2018-12-12
+5	<INS: 2018-01-01, 2018-12-12
+6	<DEL: 1999-01-01, 2018-12-12
 # generated columns are updated
 create or replace table t (s date, e date,
 xs date as (s) stored, xe date as (e) stored,
@@ -173,11 +204,11 @@ s	e	xs	xe
 select * from log_tbl order by id;
 id	log
 1	>DEL: 1999-01-01, 2018-12-12
-2	<DEL: 1999-01-01, 2018-12-12
-3	>INS: 1999-01-01, 2000-01-01
-4	<INS: 1999-01-01, 2000-01-01
-5	>INS: 2018-01-01, 2018-12-12
-6	<INS: 2018-01-01, 2018-12-12
+2	>INS: 1999-01-01, 2000-01-01
+3	<INS: 1999-01-01, 2000-01-01
+4	>INS: 2018-01-01, 2018-12-12
+5	<INS: 2018-01-01, 2018-12-12
+6	<DEL: 1999-01-01, 2018-12-12
 # View can't be used
 create or replace view v as select * from t;
 delete from v for portion of p from '2000-01-01' to '2018-01-01';
@@ -260,9 +291,9 @@ s	e	if(row_start = @ins_time, "OLD", "NEW")	check_row(row_start, row_end)
 select * from log_tbl order by id;
 id	log
 1	>DEL: 1999-01-01, 2018-12-12
-2	<DEL: 1999-01-01, 2018-12-12
-3	>INS: 1999-01-01, 2000-01-01
-4	<INS: 1999-01-01, 2000-01-01
-5	>INS: 2018-01-01, 2018-12-12
-6	<INS: 2018-01-01, 2018-12-12
+2	>INS: 1999-01-01, 2000-01-01
+3	<INS: 1999-01-01, 2000-01-01
+4	>INS: 2018-01-01, 2018-12-12
+5	<INS: 2018-01-01, 2018-12-12
+6	<DEL: 1999-01-01, 2018-12-12
 create or replace database test;
