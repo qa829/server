@@ -615,5 +615,19 @@ DROP TABLE t1;
 
 
 --echo #
+--echo # Bug #29723340: MYSQL SERVER CRASH AFTER SQL QUERY WITH DATA ?AST
+--echo #
+
+create table t1(a int);
+insert t1 values("1e-214748364");
+insert t1 values("1e-2147483648");
+insert t1 values("1e-21474836480");
+insert t1 values("1e+214748364");
+insert t1 values("1e+2147483647");
+insert t1 values("1e+21474836470");
+select * from t1;
+drop table t1;
+
+--echo #
 --echo # End of 5.5 tests
 --echo #
