@@ -529,9 +529,6 @@ buf_flush_or_remove_page(
 			buf_pool, bpage, BUF_FLUSH_SINGLE_PAGE, false);
 
 		if (processed) {
-			/* Wake possible simulated aio thread to actually
-			post the writes to the operating system */
-			os_aio_simulated_wake_handler_threads();
 			buf_pool_mutex_enter(buf_pool);
 		} else {
 			mutex_exit(block_mutex);

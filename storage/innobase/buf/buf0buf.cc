@@ -2035,7 +2035,7 @@ buf_pool_init_instance(
 	/* Initialize the temporal memory array and slots */
 	new(&buf_pool->io_buf) buf_pool_t::io_buf_t(
 		(srv_n_read_io_threads + srv_n_write_io_threads)
-		* (8 * OS_AIO_N_PENDING_IOS_PER_THREAD));
+		* OS_AIO_N_PENDING_IOS_PER_THREAD);
 
 	buf_pool_mutex_exit(buf_pool);
 

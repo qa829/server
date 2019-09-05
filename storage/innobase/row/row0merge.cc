@@ -4112,7 +4112,7 @@ row_merge_file_create_low(
 	File f = create_temp_file(filename, path, "ib",
 				  O_BINARY | O_SEQUENTIAL,
 				  MYF(MY_WME | MY_TEMPORARY));
-	pfs_os_file_t fd = IF_WIN(my_get_osfhandle(f), f);
+	pfs_os_file_t fd = IF_WIN((os_file_t)my_get_osfhandle(f), f);
 
 #ifdef UNIV_PFS_IO
 	register_pfs_file_open_end(locker, fd, 
@@ -4158,7 +4158,7 @@ row_merge_file_destroy_low(
 	const pfs_os_file_t& fd)	/*!< in: merge file descriptor */
 {
 	if (fd != OS_FILE_CLOSED) {
-		int res = mysql_file_close(IF_WIN(my_win_handle2File(fd), fd),
+		int res = mysql_file_close(IF_WIN(my_win_handle2File((os_file_t)fd), fd),
 					   MYF(MY_WME));
 		ut_a(res != -1);
 	}

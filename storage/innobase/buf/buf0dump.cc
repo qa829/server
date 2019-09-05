@@ -720,9 +720,6 @@ buf_load()
 			page_id_t(this_space_id, BUF_DUMP_PAGE(dump[i])),
 			zip_size, true);
 
-		if (i % 64 == 63) {
-			os_aio_simulated_wake_handler_threads();
-		}
 
 		if (buf_load_abort_flag) {
 			if (space != NULL) {

@@ -653,7 +653,6 @@ is defined */
 static PSI_thread_info	all_innodb_threads[] = {
 	PSI_KEY(buf_dump_thread),
 	PSI_KEY(dict_stats_thread),
-	PSI_KEY(io_handler_thread),
 	PSI_KEY(io_ibuf_thread),
 	PSI_KEY(io_log_thread),
 	PSI_KEY(io_read_thread),
@@ -668,6 +667,7 @@ static PSI_thread_info	all_innodb_threads[] = {
 	PSI_KEY(srv_worker_thread),
 	PSI_KEY(trx_rollback_clean_thread),
 	PSI_KEY(thd_destructor_thread),
+	PSI_KEY(thread_pool_thread)
 };
 # endif /* UNIV_PFS_THREAD */
 

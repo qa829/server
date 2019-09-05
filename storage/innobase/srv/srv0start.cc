@@ -172,8 +172,6 @@ enum srv_shutdown_t	srv_shutdown_state = SRV_SHUTDOWN_NONE;
 /** Files comprising the system tablespace */
 pfs_os_file_t	files[1000];
 
-/** io_handler_thread parameters for thread identification */
-static ulint		n[SRV_MAX_N_IO_THREADS + 6];
 /** io_handler_thread identifiers, 32 is the maximum number of purge threads  */
 /** 6 is the ? */
 #define	START_OLD_THREAD_CNT	(SRV_MAX_N_IO_THREADS + 6 + 32)
@@ -195,7 +193,6 @@ static char*	srv_monitor_file_name;
 /* Keys to register InnoDB threads with performance schema */
 mysql_pfs_key_t	buf_dump_thread_key;
 mysql_pfs_key_t	dict_stats_thread_key;
-mysql_pfs_key_t	io_handler_thread_key;
 mysql_pfs_key_t	io_ibuf_thread_key;
 mysql_pfs_key_t	io_log_thread_key;
 mysql_pfs_key_t	io_read_thread_key;
@@ -206,6 +203,7 @@ mysql_pfs_key_t	srv_master_thread_key;
 mysql_pfs_key_t	srv_monitor_thread_key;
 mysql_pfs_key_t	srv_purge_thread_key;
 mysql_pfs_key_t	srv_worker_thread_key;
+mysql_pfs_key_t	thread_pool_thread_key;
 #endif /* UNIV_PFS_THREAD */
 
 #ifdef HAVE_PSI_STAGE_INTERFACE
@@ -275,64 +273,6 @@ srv_file_check_mode(
 	return(true);
 }
 
-/********************************************************************//**
-I/o-handler thread function.
-@return OS_THREAD_DUMMY_RETURN */
-extern "C"
-os_thread_ret_t
-DECLARE_THREAD(io_handler_thread)(
-/*==============================*/
-	void*	arg)	/*!< in: pointer to the number of the segment in
-			the aio array */
-{
-	ulint	segment;
-
-	segment = *((ulint*) arg);
-
-#ifdef UNIV_DEBUG_THREAD_CREATION
-	ib::info() << "Io handler thread " << segment << " starts, id "
-		<< os_thread_pf(os_thread_get_curr_id());
-#endif
-
-	/* For read only mode, we don't need ibuf and log I/O thread.
-	Please see srv_start() */
-	ulint   start = (srv_read_only_mode) ? 0 : 2;
-
-	if (segment < start) {
-		if (segment == 0) {
-			pfs_register_thread(io_ibuf_thread_key);
-		} else {
-			ut_ad(segment == 1);
-			pfs_register_thread(io_log_thread_key);
-		}
-	} else if (segment >= start
-		   && segment < (start + srv_n_read_io_threads)) {
-			pfs_register_thread(io_read_thread_key);
-
-	} else if (segment >= (start + srv_n_read_io_threads)
-		   && segment < (start + srv_n_read_io_threads
-				 + srv_n_write_io_threads)) {
-		pfs_register_thread(io_write_thread_key);
-
-	} else {
-		pfs_register_thread(io_handler_thread_key);
-	}
-
-	while (srv_shutdown_state != SRV_SHUTDOWN_EXIT_THREADS
-	       || buf_page_cleaner_is_active
-	       || !os_aio_all_slots_free()) {
-		fil_aio_wait(segment);
-	}
-
-	/* We count the number of threads in os_thread_exit(). A created
-	thread should always use that to exit and not use return() to exit.
-	The thread actually never comes here because it is exited in an
-	os_event_wait(). */
-
-	os_thread_exit();
-
-	OS_THREAD_DUMMY_RETURN;
-}
 
 /*********************************************************************//**
 Creates a log file.
@@ -1120,25 +1060,11 @@ srv_shutdown_all_bg_threads()
 			return;
 		}
 
-		switch (srv_operation) {
-		case SRV_OPERATION_BACKUP:
-		case SRV_OPERATION_RESTORE_DELTA:
-			break;
-		case SRV_OPERATION_NORMAL:
-		case SRV_OPERATION_RESTORE:
-		case SRV_OPERATION_RESTORE_EXPORT:
-			if (!buf_page_cleaner_is_active
-			    && os_aio_all_slots_free()) {
-				os_aio_wake_all_threads_at_shutdown();
-			}
-		}
-
 		os_thread_sleep(100000);
 	}
 
 	ib::warn() << os_thread_count << " threads created by InnoDB"
 		" had not exited at shutdown!";
-	ut_d(os_aio_print_pending_io(stderr));
 	ut_ad(0);
 }
 
@@ -1535,15 +1461,6 @@ dberr_t srv_start(bool create_new_db)
 	recv_sys.create();
 	lock_sys.create(srv_lock_table_size);
 
-	/* Create i/o-handler threads: */
-
-	for (ulint t = 0; t < srv_n_file_io_threads; ++t) {
-
-		n[t] = t;
-
-		thread_handles[t] = os_thread_create(io_handler_thread, n + t, thread_ids + t);
-		thread_started[t] = true;
-	}
 
 	if (!srv_read_only_mode) {
 		buf_flush_page_cleaner_init();
