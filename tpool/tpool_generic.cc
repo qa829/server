@@ -615,8 +615,17 @@ void thread_pool_generic::submit_task(const task &task)
 */
 thread_pool_generic::~thread_pool_generic()
 {
+  /*
+    Stop AIO early.
+    This is needed to prevent AIO completion thread
+    from calling submit_task() on an object that is being destroyed.
+  */
+  delete m_aio;
+  m_aio= nullptr;
+
   std::unique_lock<std::mutex> lk(m_mtx);
   m_in_shutdown= true;
+
   /* Wake up idle threads. */
   while (wake(WAKE_REASON_SHUTDOWN))
   {
@@ -630,8 +639,6 @@ thread_pool_generic::~thread_pool_generic()
   lk.unlock();
 
   timer_stop();
-
-  m_cv_queue_not_full.notify_all();
 }
 
 thread_pool *create_thread_pool_generic(int min_threads, int max_threads)
