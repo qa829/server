@@ -631,6 +631,34 @@ void add_table_scan_values_to_trace(THD *thd, JOIN_TAB *tab)
            .add("cost", tab->read_time);
 }
 
+
+/*
+  @brief
+    Add the tables inside a partial join to the optimizer trace
+
+  @param join                join handler
+  @param idx                 length of the partial QEP in 'join->positions'
+  @table_map                 map of all non-const tables of the join
+
+  @note
+    This function is used during best_access_path to print the tables
+    inside the partial join that were considered doing the cost based
+    analysis of the various join orders.
+*/
+
+void trace_plan_prefix(JOIN *join, uint idx, table_map join_tables)
+{
+  THD *const thd= join->thd;
+  Json_writer_array plan_prefix(thd, "plan_prefix");
+  for (uint i= 0; i < idx; i++)
+  {
+    TABLE_LIST *const tr= join->positions[i].table->tab_list;
+    if (!(tr->map & join_tables))
+      plan_prefix.add_table_name(join->positions[i].table);
+  }
+}
+
+
 /*
   Print the join order of all the tables for top level select.
 
