@@ -119,7 +119,6 @@ struct MY_ALIGNED(CPU_LEVEL1_DCACHE_LINESIZE)  worker_data
     return m_state & LONG_TASK;
   }
   std::chrono::system_clock::time_point m_task_start_time;
-  bool m_in_cache;
   worker_data() :
     m_cv(),
     m_wake_reason(WAKE_REASON_NONE),
@@ -127,8 +126,7 @@ struct MY_ALIGNED(CPU_LEVEL1_DCACHE_LINESIZE)  worker_data
     m_prev(),
     m_next(),
     m_state(NONE),
-    m_task_start_time(),
-    m_in_cache()
+    m_task_start_time()
   {}
 
   /*Define custom new/delete because of overaligned structure. */
@@ -393,10 +391,7 @@ void thread_pool_generic::worker_main(worker_data *thread_var)
     m_worker_destroy_callback();
 
   worker_end(thread_var);
-  if (thread_var->m_in_cache)
-    m_thread_data_cache.put(thread_var);
-  else
-    delete thread_var;
+  m_thread_data_cache.put(thread_var);
 }
 
 void thread_pool_generic::timer_main()
@@ -487,16 +482,7 @@ bool thread_pool_generic::add_thread()
     }
   }
 
-  worker_data *thread_data = m_thread_data_cache.get(false);
-  if(thread_data)
-  {
-    thread_data->m_in_cache = true;
-  }
-  else
-  {
-    /* Cache was too small.*/
-    thread_data = new worker_data;
-  }
+  worker_data *thread_data = m_thread_data_cache.get();
   m_active_threads.push_back(thread_data);
   std::thread thread(&thread_pool_generic::worker_main,this, thread_data);
   m_last_thread_creation = std::chrono::system_clock::now();
