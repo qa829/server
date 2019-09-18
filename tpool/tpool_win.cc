@@ -69,7 +69,42 @@ class thread_pool_win : public thread_pool
   };
 
   static thread_local struct tls_data tls_data;
+  /** Timer */
+  class native_timer : public timer
+  {
+    PTP_TIMER m_ptp_timer;
+    task m_task;
+    static void CALLBACK timer_callback(PTP_CALLBACK_INSTANCE, void *context,
+                                        PTP_TIMER)
+    {
+      native_timer *timer= (native_timer *) context;
+      timer->m_task.execute();
+    }
 
+  public:
+    native_timer(thread_pool_win &pool, const task &t) : m_task(t)
+    {
+      m_ptp_timer= CreateThreadpoolTimer(timer_callback, this, &pool.m_env);
+    }
+    void set_time(int initial_delay_ms, int period_ms) override
+    {
+      unsigned long long initial_time_abs;
+      GetSystemTimeAsFileTime((PFILETIME) &initial_time_abs);
+      initial_time_abs+= initial_delay_ms;
+      SetThreadpoolTimer(m_ptp_timer, (PFILETIME) &initial_time_abs, period_ms,
+                         1000);
+    }
+    void disarm() override 
+    {
+      SetThreadpoolTimer(m_ptp_timer, nullptr, 0, 0);
+      WaitForThreadpoolTimerCallbacks(m_ptp_timer, TRUE);
+    }
+    ~native_timer()
+    {
+      disarm();
+      CloseThreadpoolTimer(m_ptp_timer);
+    }
+  };
   /** AIO handler */
   class native_aio : public aio
   {
@@ -216,9 +251,14 @@ public:
       abort();
   }
 
-  virtual aio *create_native_aio(int max_io) override
+  aio *create_native_aio(int max_io) override
   {
     return new native_aio(*this, max_io);
+  }
+
+  timer* create_timer(const task& t) override
+  {
+    return new native_timer(*this, t);
   }
 };
 

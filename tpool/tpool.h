@@ -14,6 +14,7 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111 - 1301 USA*/
 
 #pragma once
+#include <memory> /* unique_ptr */
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -51,6 +52,10 @@ struct task
 {
   callback_func m_func;
   void *m_arg;
+  void execute()
+  {
+    m_func(m_arg);
+  }
 };
 
 enum aio_opcode
@@ -102,6 +107,14 @@ public:
   virtual ~aio(){};
 };
 
+class timer
+{
+public:
+  virtual void set_time(int initial_delay_ms, int period_ms) = 0;
+  virtual void disarm() = 0;
+  virtual ~timer(){}
+};
+
 class thread_pool;
 
 extern aio *create_simulated_aio(thread_pool *tp, int max_io);
@@ -110,7 +123,7 @@ class thread_pool
 {
 protected:
   /* AIO handler */
-  aio *m_aio;
+  std::unique_ptr<aio> m_aio;
   virtual aio *create_native_aio(int max_io)= 0;
 
   /**
@@ -125,6 +138,7 @@ public:
   {
   }
   virtual void submit_task(const task &t)= 0;
+  virtual timer* create_timer(const task &t) = 0;
   void set_thread_callbacks(void (*init)(), void (*destroy)())
   {
     m_worker_init_callback= init;
@@ -133,15 +147,15 @@ public:
   int configure_aio(bool use_native_aio, int max_io)
   {
     if (use_native_aio)
-      m_aio= create_native_aio(max_io);
+      m_aio.reset(create_native_aio(max_io));
     if (!m_aio)
-      m_aio= create_simulated_aio(this, max_io);
+      m_aio.reset(create_simulated_aio(this, max_io));
     return !m_aio ? -1 : 0;
   }
   int bind(native_file_handle &fd) { return m_aio->bind(fd); }
   void unbind(const native_file_handle &fd) { m_aio->unbind(fd); }
   int submit_io(const aiocb *cb) { return m_aio->submit_io(cb); }
-  virtual ~thread_pool() { delete m_aio; }
+  virtual ~thread_pool() {}
 };
 const int DEFAULT_MIN_POOL_THREADS= 1;
 const int DEFAULT_MAX_POOL_THREADS= 500;

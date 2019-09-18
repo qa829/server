@@ -31,6 +31,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111 - 1301 USA*/
 #include <assert.h>
 #include <my_global.h>
 #include <my_dbug.h>
+#include <thr_timer.h>
 #include <stdlib.h>
 
 namespace tpool
@@ -204,12 +205,6 @@ class thread_pool_generic : public thread_pool
   /** True, if threadpool is being shutdown, false otherwise */
   bool m_in_shutdown;
 
-  /**
-    Whether this threadpool uses a timer. With permanent pool (fixed number of
-    workers, timer is not started, and m_timer_on will be false.
-  */
-  bool m_timer_on;
-
   /** time point when timer last ran, used as a coarse clock. */
   std::chrono::system_clock::time_point m_timestamp;
 
@@ -226,17 +221,28 @@ class thread_pool_generic : public thread_pool
   /** Maximimum number of threads in this pool. */
   unsigned int m_max_threads;
 
+  /* Maintainence related statistics (see maintainence()) */
+  size_t m_last_thread_count;
+  unsigned int m_last_tasks_dequeued;
+  std::unique_ptr<timer> m_maintaince_timer_task;
+  std::atomic<int> m_timer_count;
+
   void worker_main(worker_data *thread_data);
   void worker_end(worker_data* thread_data);
-  void timer_main();
+
+  /* Checks threadpool responsiveness, adjusts thread_counts */
+  void maintainence();
+  static void maintainence_func(void* arg)
+  {
+    ((thread_pool_generic *)arg)->maintainence();
+  }
   bool add_thread();
   bool wake(worker_wake_reason reason, const task *t= nullptr);
   void wake_or_create_thread();
   bool get_task(worker_data *thread_var, task *t);
   bool wait_for_tasks(std::unique_lock<std::mutex> &lk,
                       worker_data *thread_var);
-  void timer_start();
-  void timer_stop();
+
   size_t thread_count()
   {
     return m_active_threads.size() + m_standby_threads.size();
@@ -254,6 +260,57 @@ public:
 #else
     return nullptr;
 #endif
+  }
+
+  class timer_generic : public thr_timer_t, public timer
+  {
+    thread_pool_generic* m_pool;
+    task m_task;
+
+    static void submit_task(void* arg)
+    {
+      timer_generic* timer = (timer_generic*)arg;
+      timer->m_pool->submit_task(timer->m_task);
+    }
+
+  public:
+    timer_generic(const task & t, thread_pool_generic * pool):
+      m_pool(pool), m_task(t)
+    {
+      if (pool)
+      {
+        /* EXecute callback in threadpool*/
+        pool->m_timer_count++;
+        thr_timer_init(this, submit_task, this);
+      }
+      else
+      {
+        /* run in "timer" thread */
+        thr_timer_init(this, m_task.m_func, m_task.m_arg);
+      }
+    }
+
+    void set_time(int initial_delay_ms, int period_ms) override
+    {
+      thr_timer_settime(this, 1000ULL * initial_delay_ms);
+      thr_timer_set_period(this, 1000ULL * period_ms);
+    }
+
+    void disarm() override
+    {
+      thr_timer_end(this);
+    }
+    virtual ~timer_generic()
+    {
+      if(m_pool)
+        m_pool->m_timer_count--;
+      disarm(); 
+    }
+  };
+
+  virtual timer* create_timer(const task& t) override
+  {
+    return new timer_generic(t, this);
   }
 };
 
@@ -394,53 +451,48 @@ void thread_pool_generic::worker_main(worker_data *thread_var)
   m_thread_data_cache.put(thread_var);
 }
 
-void thread_pool_generic::timer_main()
+/*
+  Periodic job to fix thread count and concurrency,
+  in case of long tasks, etc
+*/
+void thread_pool_generic::maintainence()
 {
-  int last_tasks_dequeued= 0;
-  size_t last_threads= 0;
-  for (;;)
+  std::unique_lock<std::mutex> lk(m_mtx);
+
+  m_timestamp = std::chrono::system_clock::now();
+
+  m_long_tasks_count = 0;
+
+  if (m_task_queue.empty())
+    return;
+
+  for (auto thread_data = m_active_threads.front();
+    thread_data;
+    thread_data = thread_data->m_next)
   {
-    std::unique_lock<std::mutex> lk(m_mtx);
-    m_cv_timer.wait_for(lk, m_timer_interval);
-    m_timestamp = std::chrono::system_clock::now();
-
-    m_long_tasks_count = 0;
-
-    if (!m_timer_on || (m_in_shutdown && m_task_queue.empty()))
-      return;
-    if (m_task_queue.empty())
-      continue;
-
-    for (auto thread_data = m_active_threads.front();
-      thread_data;
-      thread_data = thread_data->m_next)
+    if (thread_data->is_executing_task() &&
+      (thread_data->is_long_task() 
+      || (m_timestamp - thread_data->m_task_start_time > LONG_TASK_DURATION)))
     {
-      if (thread_data->is_executing_task() &&
-        (thread_data->is_long_task() 
-        || (m_timestamp - thread_data->m_task_start_time > LONG_TASK_DURATION)))
-      {
-        thread_data->m_state |= worker_data::LONG_TASK;
-        m_long_tasks_count++;
-      }
+      thread_data->m_state |= worker_data::LONG_TASK;
+      m_long_tasks_count++;
     }
-    size_t thread_cnt = thread_count();
-    if (m_active_threads.size() - m_long_tasks_count < m_concurrency)
-    {
-      wake_or_create_thread();
-      continue;
-    }
-
-
-    if (last_tasks_dequeued == m_tasks_dequeued &&
-        last_threads <= thread_cnt && m_active_threads.size() == thread_cnt)
-    {
-      // no progress made since last iteration. create new
-      // thread
-      add_thread();
-    }
-    last_tasks_dequeued= m_tasks_dequeued;
-    last_threads= thread_cnt;
   }
+  size_t thread_cnt = (int)thread_count();
+  if (m_active_threads.size() - m_long_tasks_count < m_concurrency)
+  {
+    wake_or_create_thread();
+    return;
+  }
+  if (m_last_tasks_dequeued == m_tasks_dequeued &&
+      m_last_thread_count <= thread_cnt && m_active_threads.size() == thread_cnt)
+  {
+    // no progress made since last iteration. create new
+    // thread
+    add_thread();
+  }
+  m_last_tasks_dequeued= m_tasks_dequeued;
+  m_last_thread_count= thread_cnt;
 }
 
 /*
@@ -511,55 +563,46 @@ bool thread_pool_generic::wake(worker_wake_reason reason, const task *t)
   return true;
 }
 
-/** Start the timer thread*/
-void thread_pool_generic::timer_start()
-{
-  m_timer_thread = std::thread(&thread_pool_generic::timer_main, this);
-  m_timer_on = true;
-}
 
-
-/** Stop the timer thread*/
-void thread_pool_generic::timer_stop()
+thread_pool_generic::thread_pool_generic(int min_threads, int max_threads) :
+  m_thread_data_cache(max_threads),
+  m_task_queue(10000),
+  m_standby_threads(),
+  m_active_threads(),
+  m_mtx(),
+  m_thread_timeout(std::chrono::milliseconds(60000)),
+  m_timer_interval(std::chrono::milliseconds(100)),
+  m_cv_no_threads(),
+  m_cv_timer(),
+  m_tasks_dequeued(),
+  m_wakeups(),
+  m_spurious_wakeups(),
+  m_concurrency(std::thread::hardware_concurrency()),
+  m_in_shutdown(),
+  m_timestamp(),
+  m_long_tasks_count(),
+  m_last_thread_creation(),
+  m_min_threads(min_threads),
+  m_max_threads(max_threads),
+  m_last_thread_count(),
+  m_last_tasks_dequeued(),
+  m_maintaince_timer_task(),
+  m_timer_count()
 {
-  assert(m_in_shutdown || m_max_threads == m_min_threads);
-  if(!m_timer_on)
-    return;
-  m_timer_on = false;
-  m_cv_timer.notify_one();
-  m_timer_thread.join();
-}
 
-thread_pool_generic::thread_pool_generic(int min_threads, int max_threads):
-      m_thread_data_cache(max_threads),
-      m_task_queue(10000),
-      m_standby_threads(),
-      m_active_threads(),
-      m_mtx(),
-      m_thread_timeout(std::chrono::milliseconds(60000)),
-      m_timer_interval(std::chrono::milliseconds(100)),
-      m_cv_no_threads(),
-      m_cv_timer(),
-      m_tasks_dequeued(),
-      m_wakeups(),
-      m_spurious_wakeups(),
-      m_concurrency(std::thread::hardware_concurrency()),
-      m_in_shutdown(),
-      m_timer_on(),
-      m_timestamp(),
-      m_long_tasks_count(),
-      m_last_thread_creation(),
-      m_min_threads(min_threads),
-      m_max_threads(max_threads)
-{
-  if (min_threads != max_threads)
-    timer_start();
   if (m_max_threads < m_concurrency)
     m_concurrency = m_max_threads;
   if (m_min_threads > m_concurrency)
     m_concurrency = min_threads;
   if (!m_concurrency)
     m_concurrency = 1;
+
+  if (min_threads < max_threads)
+  {
+    task t{ thread_pool_generic::maintainence_func, this };
+    m_maintaince_timer_task.reset(new timer_generic(t, 0));
+    m_maintaince_timer_task->set_time((int)m_timer_interval.count(), (int)m_timer_interval.count());
+  }
 }
 
 
@@ -606,8 +649,13 @@ thread_pool_generic::~thread_pool_generic()
     This is needed to prevent AIO completion thread
     from calling submit_task() on an object that is being destroyed.
   */
-  delete m_aio;
-  m_aio= nullptr;
+  m_aio.reset();
+
+  /* Also stop the maintanence task early. */
+  m_maintaince_timer_task.reset();
+
+  /* All timers must be destroyed by now. */
+  DBUG_ASSERT(!m_timer_count);
 
   std::unique_lock<std::mutex> lk(m_mtx);
   m_in_shutdown= true;
@@ -623,8 +671,6 @@ thread_pool_generic::~thread_pool_generic()
   }
 
   lk.unlock();
-
-  timer_stop();
 }
 
 thread_pool *create_thread_pool_generic(int min_threads, int max_threads)
