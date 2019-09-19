@@ -3881,8 +3881,8 @@ enum open_frm_error open_table_from_share(THD *thd, TABLE_SHARE *share,
       break;
     }
 
-    if (unlikely(parse_vcol_defs(thd, &outparam->mem_root, outparam,
-                                 &error_reported, mode)))
+    if (parse_vcol_defs(thd, &outparam->mem_root, outparam,
+                        &error_reported, mode))
     {
       error= OPEN_FRM_CORRUPTED;
       goto err;

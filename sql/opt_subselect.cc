@@ -457,7 +457,6 @@ void best_access_path(JOIN *join, JOIN_TAB *s,
                              table_map remaining_tables, uint idx, 
                              bool disable_jbuf, double record_count,
                              POSITION *pos, POSITION *loose_scan_pos);
-void trace_plan_prefix(JOIN *join, uint idx, table_map remaining_tables);
 
 static Item *create_subq_in_equalities(THD *thd, SJ_MATERIALIZATION_INFO *sjm, 
                                 Item_in_subselect *subq_pred);
@@ -2939,10 +2938,10 @@ void advance_sj_state(JOIN *join, table_map remaining_tables, uint idx,
       const char *sname;
       switch (pos->sj_strategy) {
         case SJ_OPT_MATERIALIZE:
-          sname= "SJ-Materialize";
+          sname= "SJ-Materialization";
           break;
         case SJ_OPT_MATERIALIZE_SCAN:
-          sname= "SJ-Materialize-Scan";
+          sname= "SJ-Materialization-Scan";
           break;
         case SJ_OPT_FIRST_MATCH:
           sname= "FirstMatch";
@@ -3204,7 +3203,7 @@ bool LooseScan_picker::check_qep(JOIN *join,
       (new_join_tab->table->map & loosescan_need_tables))
   {
     Json_writer_object trace(join->thd);
-    trace.add("strategy", "SJ-Materialization-Scan");
+    trace.add("strategy", "LooseScan");
     /* 
       Ok we have LooseScan plan and also have all LooseScan sj-nest's
       inner tables and outer correlated tables into the prefix.
@@ -3859,7 +3858,7 @@ void fix_semijoin_strategies_for_picked_join_order(JOIN *join)
       join->cur_sj_inner_tables= 0;
       Json_writer_object semijoin_strategy(thd);
       semijoin_strategy.add("semi_join_strategy","LooseScan");
-      Json_writer_array semijoin_plan(thd, "join_order");      
+      Json_writer_array semijoin_plan(thd, "join_order");
       for (idx= first; idx <= tablenr; idx++)
       {
         if (unlikely(thd->trace_started()))
@@ -3900,6 +3899,8 @@ void fix_semijoin_strategies_for_picked_join_order(JOIN *join)
 
     if (pos->sj_strategy == SJ_OPT_DUPS_WEEDOUT)
     {
+      Json_writer_object semijoin_strategy(thd);
+      semijoin_strategy.add("semi_join_strategy","DuplicateWeedout");
       /* 
         Duplicate Weedout starting at pos->first_dupsweedout_table, ending at
         this table.
