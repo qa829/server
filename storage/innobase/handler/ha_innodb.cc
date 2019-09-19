@@ -661,7 +661,6 @@ static PSI_thread_info	all_innodb_threads[] = {
 	PSI_KEY(page_cleaner_thread),
 	PSI_KEY(recv_writer_thread),
 	PSI_KEY(srv_error_monitor_thread),
-	PSI_KEY(srv_lock_timeout_thread),
 	PSI_KEY(srv_master_thread),
 	PSI_KEY(srv_monitor_thread),
 	PSI_KEY(srv_purge_thread),

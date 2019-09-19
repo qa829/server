@@ -1591,9 +1591,7 @@ loop:
 		os_event_set(srv_error_event);
 		os_event_set(srv_monitor_event);
 		os_event_set(srv_buf_dump_event);
-		if (lock_sys.timeout_thread_active) {
-			os_event_set(lock_sys.timeout_event);
-		}
+		lock_sys.timeout_timer_task.reset();
 		if (dict_stats_event) {
 			os_event_set(dict_stats_event);
 		} else {
@@ -1647,8 +1645,6 @@ loop:
 		goto wait_suspend_loop;
 	} else if (srv_dict_stats_thread_active) {
 		thread_name = "dict_stats_thread";
-	} else if (lock_sys.timeout_thread_active) {
-		thread_name = "lock_wait_timeout_thread";
 	} else if (srv_buf_dump_thread_active) {
 		thread_name = "buf_dump_thread";
 		goto wait_suspend_loop;

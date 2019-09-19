@@ -497,67 +497,27 @@ lock_wait_check_and_cancel(
 	}
 }
 
-/*********************************************************************//**
-A thread which wakes up threads whose lock wait may have lasted too long.
-@return a dummy parameter */
-extern "C"
-os_thread_ret_t
-DECLARE_THREAD(lock_wait_timeout_thread)(void*)
+/** Task that is periodically runs in the thread pool*/
+void lock_wait_timeout_task(void*)
 {
-	int64_t		sig_count = 0;
-	os_event_t	event = lock_sys.timeout_event;
+	lock_wait_mutex_enter();
 
-	ut_ad(!srv_read_only_mode);
+	/* Check all slots for user threads that are waiting
+	on locks, and if they have exceeded the time limit. */
 
-#ifdef UNIV_PFS_THREAD
-	pfs_register_thread(srv_lock_timeout_thread_key);
-#endif /* UNIV_PFS_THREAD */
+	for (srv_slot_t* slot = lock_sys.waiting_threads;
+		slot < lock_sys.last_slot;
+		++slot) {
 
-	do {
-		srv_slot_t*	slot;
+		/* We are doing a read without the lock mutex
+		and/or the trx mutex. This is OK because a slot
+		can't be freed or reserved without the lock wait
+		mutex. */
 
-		/* When someone is waiting for a lock, we wake up every second
-		and check if a timeout has passed for a lock wait */
-
-		os_event_wait_time_low(event, 1000000, sig_count);
-		sig_count = os_event_reset(event);
-
-		if (srv_shutdown_state >= SRV_SHUTDOWN_CLEANUP) {
-			break;
+		if (slot->in_use) {
+			lock_wait_check_and_cancel(slot);
 		}
-
-		lock_wait_mutex_enter();
-
-		/* Check all slots for user threads that are waiting
-	       	on locks, and if they have exceeded the time limit. */
-
-		for (slot = lock_sys.waiting_threads;
-		     slot < lock_sys.last_slot;
-		     ++slot) {
-
-			/* We are doing a read without the lock mutex
-			and/or the trx mutex. This is OK because a slot
-		       	can't be freed or reserved without the lock wait
-		       	mutex. */
-
-			if (slot->in_use) {
-				lock_wait_check_and_cancel(slot);
-			}
-		}
-
-		sig_count = os_event_reset(event);
-
-		lock_wait_mutex_exit();
-
-	} while (srv_shutdown_state < SRV_SHUTDOWN_CLEANUP);
-
-	lock_sys.timeout_thread_active = false;
-
-	/* We count the number of threads in os_thread_exit(). A created
-	thread should always use that to exit and not use return() to exit. */
-
-	os_thread_exit();
-
-	OS_THREAD_DUMMY_RETURN;
+	}
+	lock_wait_mutex_exit();
 }
 

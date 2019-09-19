@@ -100,6 +100,7 @@ Created 2/16/1996 Heikki Tuuri
 #include "zlib.h"
 #include "ut0crc32.h"
 #include "btr0scrub.h"
+#include "tp0tp.h"
 
 /** Log sequence number immediately after startup */
 lsn_t	srv_start_lsn;
@@ -145,9 +146,8 @@ the initialisation step. */
 enum srv_start_state_t {
 	/** No thread started */
 	SRV_START_STATE_NONE = 0,		/*!< No thread started */
-	/** lock_wait_timeout_thread started */
-	SRV_START_STATE_LOCK_SYS = 1,		/*!< Started lock-timeout
-						thread. */
+	/** lock_wait_timeout timer task started */
+	SRV_START_STATE_LOCK_SYS = 1,
 	/** buf_flush_page_cleaner_coordinator,
 	buf_flush_page_cleaner_worker started */
 	SRV_START_STATE_IO = 2,
@@ -198,7 +198,6 @@ mysql_pfs_key_t	io_log_thread_key;
 mysql_pfs_key_t	io_read_thread_key;
 mysql_pfs_key_t	io_write_thread_key;
 mysql_pfs_key_t	srv_error_monitor_thread_key;
-mysql_pfs_key_t	srv_lock_timeout_thread_key;
 mysql_pfs_key_t	srv_master_thread_key;
 mysql_pfs_key_t	srv_monitor_thread_key;
 mysql_pfs_key_t	srv_purge_thread_key;
@@ -1006,6 +1005,8 @@ srv_shutdown_all_bg_threads()
 	ut_ad(!srv_undo_sources);
 	srv_shutdown_state = SRV_SHUTDOWN_EXIT_THREADS;
 
+	lock_sys.timeout_timer_task.reset();
+
 	/* All threads end up waiting for certain events. Put those events
 	to the signaled state. Then the threads will exit themselves after
 	os_event_wait(). */
@@ -1013,10 +1014,6 @@ srv_shutdown_all_bg_threads()
 		/* NOTE: IF YOU CREATE THREADS IN INNODB, YOU MUST EXIT THEM
 		HERE OR EARLIER */
 
-		if (srv_start_state_is_set(SRV_START_STATE_LOCK_SYS)) {
-			/* a. Let the lock timeout thread exit */
-			os_event_set(lock_sys.timeout_event);
-		}
 
 		if (!srv_read_only_mode) {
 			/* b. srv error monitor thread exits automatically,
@@ -1305,7 +1302,6 @@ dberr_t srv_start(bool create_new_db)
 
 	srv_max_n_threads = 1   /* io_ibuf_thread */
 			    + 1 /* io_log_thread */
-			    + 1 /* lock_wait_timeout_thread */
 			    + 1 /* srv_error_monitor_thread */
 			    + 1 /* srv_monitor_thread */
 			    + 1 /* srv_master_thread */
@@ -2156,13 +2152,13 @@ files_checked:
 	srv_startup_is_before_trx_rollback_phase = false;
 
 	if (!srv_read_only_mode) {
-		/* Create the thread which watches the timeouts
+		/* timer task which watches the timeouts
 		for lock waits */
-		thread_handles[2 + SRV_MAX_N_IO_THREADS] = os_thread_create(
-			lock_wait_timeout_thread,
-			NULL, thread_ids + 2 + SRV_MAX_N_IO_THREADS);
-		thread_started[2 + SRV_MAX_N_IO_THREADS] = true;
-		lock_sys.timeout_thread_active = true;
+		auto timer = srv_thread_pool->create_timer(
+			{lock_wait_timeout_task, nullptr });
+		lock_sys.timeout_timer_task.reset(timer);
+		lock_sys.timeout_timer_task->set_time(1000, 1000);
+
 
 		DBUG_EXECUTE_IF("innodb_skip_monitors", goto skip_monitors;);
 		/* Create the thread which warns of long semaphore waits */

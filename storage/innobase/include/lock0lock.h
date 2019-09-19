@@ -38,6 +38,7 @@ Created 5/7/1996 Heikki Tuuri
 #include "ut0vec.h"
 #include "gis0rtree.h"
 #include "lock0prdt.h"
+#include "tpool.h"
 
 /** Alternatives for innodb_lock_schedule_algorithm, which can be changed by
 	setting innodb_lock_schedule_algorithm. */
@@ -647,14 +648,8 @@ lock_table_has_locks(
 					table itself */
 
 /*********************************************************************//**
-A thread which wakes up threads whose lock wait may have lasted too long.
-@return a dummy parameter */
-extern "C"
-os_thread_ret_t
-DECLARE_THREAD(lock_wait_timeout_thread)(
-/*=====================================*/
-	void*	arg);	/*!< in: a dummy parameter required by
-			os_thread_create */
+A task which wakes up threads whose lock wait may have lasted too long. */
+void lock_wait_timeout_task(void*);
 
 /********************************************************************//**
 Releases a user OS thread waiting for a lock to be released, if the
@@ -797,8 +792,7 @@ public:
 						but the waits are timed.
 						Signaled on shutdown only. */
 
-	bool		timeout_thread_active;	/*!< True if the timeout thread
-						is running */
+	std::unique_ptr<tpool::timer>	timeout_timer_task; /*!< Thread pool timer task */
 
 
   /**
