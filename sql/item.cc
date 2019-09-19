@@ -3782,6 +3782,20 @@ my_decimal *Item_null::val_decimal(my_decimal *decimal_value)
 }
 
 
+longlong Item_null::val_datetime_packed(THD *)
+{
+  null_value= true;
+  return 0;
+}
+
+
+longlong Item_null::val_time_packed(THD *)
+{
+  null_value= true;
+  return 0;
+}
+
+
 bool Item_null::get_date(THD *thd, MYSQL_TIME *ltime, date_mode_t fuzzydate)
 {
   set_zero_time(ltime, MYSQL_TIMESTAMP_NONE);
@@ -8223,6 +8237,24 @@ bool Item_ref::val_native(THD *thd, Native *to)
 }
 
 
+longlong Item_ref::val_datetime_packed(THD *thd)
+{
+  DBUG_ASSERT(fixed);
+  longlong tmp= (*ref)->val_datetime_packed(thd);
+  null_value= (*ref)->null_value;
+  return tmp;
+}
+
+
+longlong Item_ref::val_time_packed(THD *thd)
+{
+  DBUG_ASSERT(fixed);
+  longlong tmp= (*ref)->val_time_packed(thd);
+  null_value= (*ref)->null_value;
+  return tmp;
+}
+
+
 my_decimal *Item_ref::val_decimal(my_decimal *decimal_value)
 {
   my_decimal *val= (*ref)->val_decimal_result(decimal_value);
@@ -9278,8 +9310,6 @@ int Item_default_value::save_in_field(Field *field_arg, bool no_conversions)
     return Item_field::save_in_field(field_arg, no_conversions);
   }
 
-  if (field_arg->default_value && field_arg->default_value->flags)
-    return 0; // defaut fields will be set later, no need to do it twice
   return field_arg->save_in_field_default_value(context->error_processor ==
                                                 &view_error_processor);
 }
@@ -9526,7 +9556,7 @@ bool Item_trigger_field::set_value(THD *thd, sp_rcontext * /*ctx*/, Item **it)
   int err_code= item->save_in_field(field, 0);
 
   field->table->copy_blobs= copy_blobs_saved;
-  field->set_explicit_default(item);
+  field->set_has_explicit_value();
 
   return err_code < 0;
 }

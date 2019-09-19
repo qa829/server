@@ -132,6 +132,9 @@ public:
   int compare_e_json_str();
   int compare_e_str_json();
 
+  void min_max_update_field_native(THD *thd, Field *field, Item *item,
+                                   int cmp_sign);
+
   Item** cache_converted_constant(THD *thd, Item **value, Item **cache,
                                   const Type_handler *type);
   inline bool is_owner_equal_func()
@@ -515,6 +518,7 @@ public:
   Item_bool_rowready_func2(THD *thd, Item *a, Item *b):
     Item_bool_func2_with_rev(thd, a, b), cmp(tmp_arg, tmp_arg + 1)
   { }
+  Sql_mode_dependency value_depends_on_sql_mode() const;
   void print(String *str, enum_query_type query_type)
   {
     Item_func::print_op(str, query_type);
@@ -2697,6 +2701,7 @@ public:
 
   bool get_negated() const { return negated; } // Used by ColumnStore
 
+  Sql_mode_dependency value_depends_on_sql_mode() const;
   longlong val_int();
   enum Functype functype() const { return LIKE_FUNC; }
   void print(String *str, enum_query_type query_type);
