@@ -152,6 +152,10 @@ public:
       m_aio.reset(create_simulated_aio(this, max_io));
     return !m_aio ? -1 : 0;
   }
+  void disable_aio()
+  {
+    m_aio.reset();
+  }
   int bind(native_file_handle &fd) { return m_aio->bind(fd); }
   void unbind(const native_file_handle &fd) { m_aio->unbind(fd); }
   int submit_io(const aiocb *cb) { return m_aio->submit_io(cb); }

@@ -102,6 +102,7 @@ Street, Fifth Floor, Boston, MA 02110-1335 USA
 #include <srv0srv.h>
 #include <crc_glue.h>
 #include <log.h>
+#include <tp0tp.h>
 
 int sys_var_init();
 
@@ -4052,7 +4053,7 @@ fail:
                                                 especially in 64-bit
                                                 computers */
         }
-
+	srv_thread_pool_init();
 	sync_check_init();
 	ut_d(sync_check_enable());
 	/* Reset the system variables in the recovery module. */

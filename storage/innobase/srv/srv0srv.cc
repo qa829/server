@@ -73,6 +73,8 @@ Created 10/8/1995 Heikki Tuuri
 #include "fil0crypt.h"
 #include "fil0pagecompress.h"
 #include "btr0scrub.h"
+#include "tp0tp.h"
+
 
 #include <my_service_manager.h>
 
@@ -194,6 +196,9 @@ my_bool	srv_adaptive_flushing;
 
 /** innodb_flush_sync; whether to ignore io_capacity at log checkpoints */
 my_bool	srv_flush_sync;
+
+/** common thread pool*/
+tpool::thread_pool* srv_thread_pool;
 
 /** Maximum number of times allowed to conditionally acquire
 mutex before switching to blocking wait on the mutex */
@@ -991,12 +996,45 @@ srv_free_slot(
 	srv_sys_mutex_exit();
 }
 
+static void thread_pool_thread_init()
+{
+	my_thread_init();
+	pfs_register_thread(thread_pool_thread_key);
+}
+static void thread_pool_thread_end()
+{
+	pfs_delete_thread();
+	my_thread_end();
+}
+
+
+void srv_thread_pool_init()
+{
+	DBUG_ASSERT(!srv_thread_pool);
+
+#if defined (_WIN32)
+	srv_thread_pool = tpool::create_thread_pool_win();
+#else
+	srv_thread_pool = tpool::create_thread_pool_generic();
+#endif
+	srv_thread_pool->set_thread_callbacks(thread_pool_thread_init, thread_pool_thread_end);
+}
+
+
+void srv_thread_pool_end()
+{
+	delete srv_thread_pool;
+	srv_thread_pool = nullptr;
+}
+
+
 /** Initialize the server. */
 static
 void
 srv_init()
 {
 	mutex_create(LATCH_ID_SRV_INNODB_MONITOR, &srv_innodb_monitor_mutex);
+	srv_thread_pool_init();
 
 	srv_sys.n_sys_threads = srv_read_only_mode
 		? 0
@@ -1093,6 +1131,7 @@ srv_free(void)
 	dict_ind_free();
 
 	trx_i_s_cache_free(trx_i_s_cache);
+	srv_thread_pool_end();
 }
 
 /*********************************************************************//**

@@ -2482,7 +2482,7 @@ void innodb_shutdown()
 			   << srv_shutdown_lsn
 			   << "; transaction id " << trx_sys.get_max_trx_id();
 	}
-
+  srv_thread_pool_end();
 	srv_start_state = SRV_START_STATE_NONE;
 	srv_was_started = false;
 	srv_start_has_been_called = false;

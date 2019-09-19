@@ -77,9 +77,8 @@ Created 10/21/1995 Heikki Tuuri
 #include <my_sys.h>
 #endif
 
-#include <tpool.h>
+#include <tp0tp.h>
 
-static tpool::thread_pool *pool;
 static tpool::thread_pool *read_pool;
 
 static Atomic_counter<int> pending_aio_writes;
@@ -2559,8 +2558,8 @@ os_file_create_func(
 		}
 	}
 
-	if (*success &&  (attributes & FILE_FLAG_OVERLAPPED) && pool) {
-		pool->bind(file);
+	if (*success &&  (attributes & FILE_FLAG_OVERLAPPED) && srv_thread_pool) {
+		srv_thread_pool->bind(file);
 	}
 	return(file);
 }
@@ -2829,8 +2828,8 @@ os_file_close_func(
 		return false;
 	}
 
-	if(pool)
-		pool->unbind(file);
+	if(srv_thread_pool)
+		srv_thread_pool->unbind(file);
  
 	return(true);
 }
@@ -4014,27 +4013,20 @@ bool os_aio_init(ulint n_reader_threads, ulint n_writer_threads, ulint)
 {
 	int max_write_events = (int)n_writer_threads * OS_AIO_N_PENDING_IOS_PER_THREAD;
 	int max_read_events = (int)n_reader_threads * OS_AIO_N_PENDING_IOS_PER_THREAD;
-#if defined (_WIN32)
-	pool = tpool::create_thread_pool_win();
-#else
-	pool = tpool::create_thread_pool_generic();
-#endif
 	int ret;
 
 #if LINUX_NATIVE_AIO
 	if (srv_use_native_aio && !is_linux_native_aio_supported())
 		srv_use_native_aio = false;
 #endif
-
-	ret = pool->configure_aio(srv_use_native_aio, max_write_events);
-	pool->set_thread_callbacks(thread_pool_thread_init, thread_pool_thread_destroy);
+	ret = srv_thread_pool->configure_aio(srv_use_native_aio, max_write_events);
 	if(ret) {
 		ut_a(srv_use_native_aio);
 		srv_use_native_aio = false;
 #ifdef LINUX_NATIVE_AIO
 		ib::info() << "Linux native AIO disabled";
 #endif
-		ret = pool->configure_aio(srv_use_native_aio, max_write_events);
+		ret = srv_thread_pool->configure_aio(srv_use_native_aio, max_write_events);
 		DBUG_ASSERT(!ret);
 	}
 
@@ -4047,9 +4039,10 @@ bool os_aio_init(ulint n_reader_threads, ulint n_writer_threads, ulint)
 
 void os_aio_free(void)
 {
-	delete pool;
+	os_aio_wait_until_no_pending_writes();
+	srv_thread_pool->disable_aio();
+
 	delete read_pool;
-	pool = nullptr;
 	read_pool = nullptr;
 }
 
@@ -4144,7 +4137,7 @@ os_aio_func(
 
 	if (cb.m_opcode == tpool::AIO_PWRITE) {
 		pending_aio_writes++;
-		tp= pool;
+		tp= srv_thread_pool;
 	} else {
 		// reads go to another pool, to prevent  deadlocks.
 		tp= read_pool;
