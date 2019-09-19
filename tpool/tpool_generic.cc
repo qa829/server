@@ -188,7 +188,7 @@ class thread_pool_generic : public thread_pool
   std::thread m_timer_thread;
 
   /** Overall number of dequeued tasks. */
-  int m_tasks_dequeued;
+  unsigned int m_tasks_dequeued;
 
   /**Statistic related, number of worker thread wakeups.*/
   int m_wakeups;
