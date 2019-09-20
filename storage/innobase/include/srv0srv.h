@@ -854,13 +854,16 @@ DECLARE_THREAD(srv_monitor_thread)(
 			os_thread_create */
 
 /*********************************************************************//**
-The master thread controlling the server.
-@return a dummy parameter */
-os_thread_ret_t
-DECLARE_THREAD(srv_master_thread)(
-/*==============================*/
-	void*	arg);	/*!< in: a dummy parameter required by
-			os_thread_create */
+The periodic master task controlling the server. */
+void srv_master_task(void *);
+
+
+/**
+Perform shutdown tasks such as background drop,
+and optionally ibuf merge.
+*/
+void srv_shutdown(bool ibuf_merge);
+
 
 /*************************************************************************
 A thread which prints warnings about semaphore waits which have lasted

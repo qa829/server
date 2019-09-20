@@ -1579,8 +1579,16 @@ logs_empty_and_mark_files_at_shutdown(void)
 
 	/* Wait until the master thread and all other operations are idle: our
 	algorithm only works if the server is idle at shutdown */
-
 	srv_shutdown_state = SRV_SHUTDOWN_CLEANUP;
+
+	srv_error_monitor_timer.reset();
+
+	if (srv_master_timer) {
+		srv_master_timer.reset();
+		if (srv_fast_shutdown < 2)
+			srv_shutdown(srv_fast_shutdown == 0);
+	}
+
 loop:
 	ut_ad(lock_sys.is_initialised() || !srv_was_started);
 	ut_ad(log_sys.is_initialised() || !srv_was_started);

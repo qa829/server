@@ -185,6 +185,7 @@ static os_thread_t	dict_stats_thread_handle;
 static bool		thread_started[SRV_MAX_N_IO_THREADS + 6 + 32] = {false};
 /** Name of srv_monitor_file */
 static char*	srv_monitor_file_name;
+std::unique_ptr<tpool::timer> srv_master_timer;
 
 /** */
 #define SRV_MAX_N_PENDING_SYNC_IOS	100
@@ -1006,6 +1007,7 @@ srv_shutdown_all_bg_threads()
 	srv_shutdown_state = SRV_SHUTDOWN_EXIT_THREADS;
 
 	lock_sys.timeout_timer_task.reset();
+	srv_master_timer.reset();
 
 	/* All threads end up waiting for certain events. Put those events
 	to the signaled state. Then the threads will exit themselves after
@@ -1304,7 +1306,6 @@ dberr_t srv_start(bool create_new_db)
 			    + 1 /* io_log_thread */
 			    + 1 /* srv_error_monitor_thread */
 			    + 1 /* srv_monitor_thread */
-			    + 1 /* srv_master_thread */
 			    + 1 /* srv_purge_coordinator_thread */
 			    + 1 /* buf_dump_thread */
 			    + 1 /* dict_stats_thread */
@@ -2229,12 +2230,10 @@ skip_monitors:
 		trx_temp_rseg_create();
 
 		if (srv_force_recovery < SRV_FORCE_NO_BACKGROUND) {
-			thread_handles[1 + SRV_MAX_N_IO_THREADS]
-				= os_thread_create(srv_master_thread, NULL,
-						   (1 + SRV_MAX_N_IO_THREADS)
-						   + thread_ids);
-			thread_started[1 + SRV_MAX_N_IO_THREADS] = true;
-			srv_start_state_set(SRV_START_STATE_MASTER);
+			srv_master_timer.reset(
+				srv_thread_pool->create_timer(
+				{ srv_master_task, nullptr }));
+			srv_master_timer->set_time(0, 1000);
 		}
 	}
 
