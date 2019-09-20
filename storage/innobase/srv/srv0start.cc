@@ -2163,14 +2163,10 @@ files_checked:
 
 		DBUG_EXECUTE_IF("innodb_skip_monitors", goto skip_monitors;);
 		/* Create the thread which warns of long semaphore waits */
-		srv_error_monitor_active = true;
-		thread_handles[3 + SRV_MAX_N_IO_THREADS] = os_thread_create(
-			srv_error_monitor_thread,
-			NULL, thread_ids + 3 + SRV_MAX_N_IO_THREADS);
-		thread_started[3 + SRV_MAX_N_IO_THREADS] = true;
+		srv_error_monitor_timer.reset(srv_thread_pool->create_timer(
+		{ srv_error_monitor_task, nullptr }));
+		srv_error_monitor_timer->set_time(1000, 1000);
 
-		/* Create the thread which prints InnoDB monitor info */
-		srv_monitor_active = true;
 		thread_handles[4 + SRV_MAX_N_IO_THREADS] = os_thread_create(
 			srv_monitor_thread,
 			NULL, thread_ids + 4 + SRV_MAX_N_IO_THREADS);

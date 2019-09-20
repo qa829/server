@@ -86,7 +86,6 @@ in microseconds, in order to reduce the lagging of the purge thread. */
 ulint	srv_dml_needed_delay;
 
 bool	srv_monitor_active;
-bool	srv_error_monitor_active;
 bool	srv_buf_dump_thread_active;
 bool	srv_dict_stats_thread_active;
 bool	srv_buf_resize_thread_active;
@@ -612,9 +611,8 @@ bool purge_sys_t::running()
 Set after setting srv_print_innodb_monitor. */
 os_event_t	srv_monitor_event;
 
-/** Event to signal the shutdown of srv_error_monitor_thread.
-Not protected by a mutex. */
-os_event_t	srv_error_event;
+/** threadpool timer for srv_error_monitor_task(). */
+std::unique_ptr<tpool::timer> srv_error_monitor_timer;
 
 /** Event for waking up buf_dump_thread. Not protected by a mutex.
 Set on shutdown or by buf_dump_start() or buf_load_start(). */
@@ -1054,8 +1052,6 @@ srv_init()
 			ut_a(slot->event);
 		}
 
-		srv_error_event = os_event_create(0);
-
 		srv_monitor_event = os_event_create(0);
 
 		srv_buf_dump_event = os_event_create(0);
@@ -1119,7 +1115,6 @@ srv_free(void)
 			os_event_destroy(srv_sys.sys_threads[i].event);
 		}
 
-		os_event_destroy(srv_error_event);
 		os_event_destroy(srv_monitor_event);
 		os_event_destroy(srv_buf_dump_event);
 		os_event_destroy(buf_flush_event);
@@ -1829,39 +1824,24 @@ exit_func:
 }
 
 /*********************************************************************//**
-A thread which prints warnings about semaphore waits which have lasted
+A task which prints warnings about semaphore waits which have lasted
 too long. These can be used to track bugs which cause hangs.
-@return a dummy parameter */
-extern "C"
-os_thread_ret_t
-DECLARE_THREAD(srv_error_monitor_thread)(void*)
+*/
+void srv_error_monitor_task(void*)
 {
 	/* number of successive fatal timeouts observed */
-	ulint		fatal_cnt	= 0;
-	lsn_t		old_lsn;
+	static ulint		fatal_cnt;
+	static lsn_t		old_lsn = srv_start_lsn;
 	lsn_t		new_lsn;
-	int64_t		sig_count;
 	/* longest waiting thread for a semaphore */
-	os_thread_id_t	waiter		= os_thread_get_curr_id();
-	os_thread_id_t	old_waiter	= waiter;
+	os_thread_id_t	waiter;
+	static os_thread_id_t	old_waiter = os_thread_get_curr_id();
 	/* the semaphore that is being waited for */
 	const void*	sema		= NULL;
-	const void*	old_sema	= NULL;
+	static const void*	old_sema	= NULL;
 
 	ut_ad(!srv_read_only_mode);
 
-	old_lsn = srv_start_lsn;
-
-#ifdef UNIV_DEBUG_THREAD_CREATION
-	ib::info() << "Error monitor thread starts, id "
-		<< os_thread_pf(os_thread_get_curr_id());
-#endif /* UNIV_DEBUG_THREAD_CREATION */
-
-#ifdef UNIV_PFS_THREAD
-	pfs_register_thread(srv_error_monitor_thread_key);
-#endif /* UNIV_PFS_THREAD */
-
-loop:
 	/* Try to track a strange bug reported by Harald Fuchs and others,
 	where the lsn seems to decrease at times */
 
@@ -1913,24 +1893,6 @@ loop:
 	to possible MySQL error file */
 
 	fflush(stderr);
-
-	sig_count = os_event_reset(srv_error_event);
-
-	os_event_wait_time_low(srv_error_event, 1000000, sig_count);
-
-	if (srv_shutdown_state == SRV_SHUTDOWN_NONE) {
-
-		goto loop;
-	}
-
-	srv_error_monitor_active = false;
-
-	/* We count the number of threads in os_thread_exit(). A created
-	thread should always use that to exit and not use return() to exit. */
-
-	os_thread_exit();
-
-	OS_THREAD_DUMMY_RETURN;
 }
 
 /******************************************************************//**

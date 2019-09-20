@@ -53,6 +53,7 @@ Created 12/9/1995 Heikki Tuuri
 #include "trx0roll.h"
 #include "srv0mon.h"
 #include "sync0sync.h"
+#include "tp0tp.h"
 
 /*
 General philosophy of InnoDB redo-logs:
@@ -1596,7 +1597,6 @@ loop:
 	os_event_set(srv_buf_resize_event);
 
 	if (!srv_read_only_mode) {
-		os_event_set(srv_error_event);
 		os_event_set(srv_monitor_event);
 		os_event_set(srv_buf_dump_event);
 		lock_sys.timeout_timer_task.reset();
@@ -1644,9 +1644,7 @@ loop:
 	/* We need these threads to stop early in shutdown. */
 	const char* thread_name;
 
-	if (srv_error_monitor_active) {
-		thread_name = "srv_error_monitor_thread";
-	} else if (srv_monitor_active) {
+	if (srv_monitor_active) {
 		thread_name = "srv_monitor_thread";
 	} else if (srv_buf_resize_thread_active) {
 		thread_name = "buf_resize_thread";

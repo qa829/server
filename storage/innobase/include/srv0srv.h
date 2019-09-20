@@ -208,9 +208,7 @@ extern const char	srv_mysql50_table_name_prefix[10];
 Set after setting srv_print_innodb_monitor. */
 extern os_event_t	srv_monitor_event;
 
-/** Event to signal the shutdown of srv_error_monitor_thread.
-Not protected by a mutex. */
-extern os_event_t	srv_error_event;
+
 
 /** Event for waking up buf_dump_thread. Not protected by a mutex.
 Set on shutdown or by buf_dump_start() or buf_load_start(). */
@@ -505,7 +503,6 @@ extern my_bool	srv_print_innodb_lock_monitor;
 extern ibool	srv_print_verbose_log;
 
 extern bool	srv_monitor_active;
-extern bool	srv_error_monitor_active;
 
 /* TRUE during the lifetime of the buffer pool dump/load thread */
 extern bool	srv_buf_dump_thread_active;
@@ -866,14 +863,10 @@ void srv_shutdown(bool ibuf_merge);
 
 
 /*************************************************************************
-A thread which prints warnings about semaphore waits which have lasted
+A task which prints warnings about semaphore waits which have lasted
 too long. These can be used to track bugs which cause hangs.
-@return a dummy parameter */
-os_thread_ret_t
-DECLARE_THREAD(srv_error_monitor_thread)(
-/*=====================================*/
-	void*	arg);	/*!< in: a dummy parameter required by
-			os_thread_create */
+*/
+void srv_error_monitor_task(void*);
 
 /*********************************************************************//**
 Purge coordinator thread that schedules the purge tasks.
