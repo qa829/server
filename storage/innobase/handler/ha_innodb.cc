@@ -55,6 +55,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <mysql/service_thd_alloc.h>
 #include <mysql/service_thd_wait.h>
 #include "field.h"
+#include "tp0tp.h"
+
 
 // MYSQL_PLUGIN_IMPORT extern my_bool lower_case_file_system;
 // MYSQL_PLUGIN_IMPORT extern char mysql_unpacked_real_data_home[];
@@ -18163,8 +18165,8 @@ innodb_status_output_update(THD*,st_mysql_sys_var*,void*var,const void*save)
 {
 	*static_cast<my_bool*>(var) = *static_cast<const my_bool*>(save);
 	mysql_mutex_unlock(&LOCK_global_system_variables);
-	/* Wakeup server monitor thread. */
-	os_event_set(srv_monitor_event);
+	/* Wakeup server monitor. */
+	srv_monitor_timer_schedule_now();
 	mysql_mutex_lock(&LOCK_global_system_variables);
 }
 

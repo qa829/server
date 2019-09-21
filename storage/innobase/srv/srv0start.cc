@@ -151,7 +151,7 @@ enum srv_start_state_t {
 	/** buf_flush_page_cleaner_coordinator,
 	buf_flush_page_cleaner_worker started */
 	SRV_START_STATE_IO = 2,
-	/** srv_error_monitor_thread, srv_monitor_thread started */
+	/** srv_error_monitor_thread, srv_print_monitor_task started */
 	SRV_START_STATE_MONITOR = 4,
 	/** srv_master_thread started */
 	SRV_START_STATE_MASTER = 8,
@@ -1006,7 +1006,7 @@ srv_shutdown_all_bg_threads()
 	ut_ad(!srv_undo_sources);
 	srv_shutdown_state = SRV_SHUTDOWN_EXIT_THREADS;
 
-	lock_sys.timeout_timer_task.reset();
+	lock_sys.timeout_timer.reset();
 	srv_master_timer.reset();
 
 	/* All threads end up waiting for certain events. Put those events
@@ -1020,12 +1020,6 @@ srv_shutdown_all_bg_threads()
 		if (!srv_read_only_mode) {
 			/* b. srv error monitor thread exits automatically,
 			no need to do anything here */
-
-			if (srv_start_state_is_set(SRV_START_STATE_MASTER)) {
-				/* c. We wake the master thread so that
-				it exits */
-				srv_wake_master_thread();
-			}
 
 			if (srv_start_state_is_set(SRV_START_STATE_PURGE)) {
 				/* d. Wakeup purge threads. */
@@ -1304,8 +1298,7 @@ dberr_t srv_start(bool create_new_db)
 
 	srv_max_n_threads = 1   /* io_ibuf_thread */
 			    + 1 /* io_log_thread */
-			    + 1 /* srv_error_monitor_thread */
-			    + 1 /* srv_monitor_thread */
+			    + 1 /* srv_print_monitor_task */
 			    + 1 /* srv_purge_coordinator_thread */
 			    + 1 /* buf_dump_thread */
 			    + 1 /* dict_stats_thread */
@@ -2155,22 +2148,14 @@ files_checked:
 	if (!srv_read_only_mode) {
 		/* timer task which watches the timeouts
 		for lock waits */
-		auto timer = srv_thread_pool->create_timer(
-			{lock_wait_timeout_task, nullptr });
-		lock_sys.timeout_timer_task.reset(timer);
-		lock_sys.timeout_timer_task->set_time(1000, 1000);
-
+    srv_start_periodic_timer(lock_sys.timeout_timer,
+      lock_wait_timeout_task, 1000);
 
 		DBUG_EXECUTE_IF("innodb_skip_monitors", goto skip_monitors;);
-		/* Create the thread which warns of long semaphore waits */
-		srv_error_monitor_timer.reset(srv_thread_pool->create_timer(
-		{ srv_error_monitor_task, nullptr }));
-		srv_error_monitor_timer->set_time(1000, 1000);
+		/* Create the task which warns of long semaphore waits */
+    srv_start_periodic_timer(srv_error_monitor_timer, srv_error_monitor_task, 1000);
+    srv_start_periodic_timer(srv_monitor_timer, srv_monitor_task, 5000);
 
-		thread_handles[4 + SRV_MAX_N_IO_THREADS] = os_thread_create(
-			srv_monitor_thread,
-			NULL, thread_ids + 4 + SRV_MAX_N_IO_THREADS);
-		thread_started[4 + SRV_MAX_N_IO_THREADS] = true;
 		srv_start_state |= SRV_START_STATE_LOCK_SYS
 			| SRV_START_STATE_MONITOR;
 

@@ -1583,6 +1583,8 @@ logs_empty_and_mark_files_at_shutdown(void)
 	srv_shutdown_state = SRV_SHUTDOWN_CLEANUP;
 
 	srv_error_monitor_timer.reset();
+	srv_monitor_timer.reset();
+	lock_sys.timeout_timer.reset();
 
 	if (srv_master_timer) {
 		srv_master_timer.reset();
@@ -1597,9 +1599,8 @@ loop:
 	os_event_set(srv_buf_resize_event);
 
 	if (!srv_read_only_mode) {
-		os_event_set(srv_monitor_event);
 		os_event_set(srv_buf_dump_event);
-		lock_sys.timeout_timer_task.reset();
+		lock_sys.timeout_timer.reset();
 		if (dict_stats_event) {
 			os_event_set(dict_stats_event);
 		} else {
@@ -1644,9 +1645,7 @@ loop:
 	/* We need these threads to stop early in shutdown. */
 	const char* thread_name;
 
-	if (srv_monitor_active) {
-		thread_name = "srv_monitor_thread";
-	} else if (srv_buf_resize_thread_active) {
+	if (srv_buf_resize_thread_active) {
 		thread_name = "buf_resize_thread";
 		goto wait_suspend_loop;
 	} else if (srv_dict_stats_thread_active) {

@@ -44,6 +44,7 @@ Created 11/5/1995 Heikki Tuuri
 #include "log0recv.h"
 #include "srv0srv.h"
 #include "srv0mon.h"
+#include "tp0tp.h"
 
 /** The number of blocks from the LRU_old pointer onward, including
 the block pointed to, must be buf_pool->LRU_old_ratio/BUF_LRU_OLD_RATIO_DIV
@@ -1035,7 +1036,7 @@ buf_LRU_check_size_of_non_data_objects(
 
 			buf_lru_switched_on_innodb_mon = true;
 			srv_print_innodb_monitor = TRUE;
-			os_event_set(srv_monitor_event);
+			srv_monitor_timer_schedule_now();
 		}
 
 	} else if (buf_lru_switched_on_innodb_mon) {

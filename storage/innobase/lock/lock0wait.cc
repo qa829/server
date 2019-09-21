@@ -211,7 +211,7 @@ wsrep_is_BF_lock_timeout(
 
 		srv_print_innodb_monitor 	= TRUE;
 		srv_print_innodb_lock_monitor 	= TRUE;
-		os_event_set(srv_monitor_event);
+		srv_monitor_timer_schedule_now();
 		return true;
 	}
 	return false;

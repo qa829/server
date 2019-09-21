@@ -786,13 +786,7 @@ public:
 
 	ulint		n_lock_max_wait_time;	/*!< Max wait time */
 
-	os_event_t	timeout_event;		/*!< An event waited for by
-						lock_wait_timeout_thread.
-						Not protected by a mutex,
-						but the waits are timed.
-						Signaled on shutdown only. */
-
-	std::unique_ptr<tpool::timer>	timeout_timer_task; /*!< Thread pool timer task */
+	std::unique_ptr<tpool::timer>	timeout_timer; /*!< Thread pool timer task */
 
 
   /**

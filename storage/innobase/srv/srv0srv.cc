@@ -85,7 +85,6 @@ UNIV_INTERN ulong	srv_fatal_semaphore_wait_threshold =  DEFAULT_SRV_FATAL_SEMAPH
 in microseconds, in order to reduce the lagging of the purge thread. */
 ulint	srv_dml_needed_delay;
 
-bool	srv_monitor_active;
 bool	srv_buf_dump_thread_active;
 bool	srv_dict_stats_thread_active;
 bool	srv_buf_resize_thread_active;
@@ -607,12 +606,10 @@ bool purge_sys_t::running()
   return srv_sys.n_threads_active[SRV_PURGE];
 }
 
-/** Event to signal srv_monitor_thread. Not protected by a mutex.
-Set after setting srv_print_innodb_monitor. */
-os_event_t	srv_monitor_event;
 
 /** threadpool timer for srv_error_monitor_task(). */
 std::unique_ptr<tpool::timer> srv_error_monitor_timer;
+std::unique_ptr<tpool::timer> srv_monitor_timer;
 
 /** Event for waking up buf_dump_thread. Not protected by a mutex.
 Set on shutdown or by buf_dump_start() or buf_load_start(). */
@@ -1052,8 +1049,6 @@ srv_init()
 			ut_a(slot->event);
 		}
 
-		srv_monitor_event = os_event_create(0);
-
 		srv_buf_dump_event = os_event_create(0);
 
 		buf_flush_event = os_event_create("buf_flush_event");
@@ -1114,8 +1109,6 @@ srv_free(void)
 		for (ulint i = 0; i < srv_sys.n_sys_threads; ++i) {
 			os_event_destroy(srv_sys.sys_threads[i].event);
 		}
-
-		os_event_destroy(srv_monitor_event);
 		os_event_destroy(srv_buf_dump_event);
 		os_event_destroy(buf_flush_event);
 	}
@@ -1711,50 +1704,35 @@ srv_export_innodb_status(void)
 	log_mutex_exit();
 }
 
-/*********************************************************************//**
-A thread which prints the info output by various InnoDB monitors.
-@return a dummy parameter */
-extern "C"
-os_thread_ret_t
-DECLARE_THREAD(srv_monitor_thread)(void*)
+struct srv_monitor_state_t
 {
-	int64_t		sig_count;
+	time_t	last_monitor_time;
+	ulint	mutex_skipped;
+	bool	last_srv_print_monitor;
+	srv_monitor_state_t()
+	{
+		srv_last_monitor_time = time(NULL);
+		last_monitor_time = srv_last_monitor_time;
+		mutex_skipped = 0;
+		last_srv_print_monitor = false;
+	}
+};
+
+/** A task which prints the info output by various InnoDB monitors.*/
+void srv_monitor_task(void*)
+{
 	double		time_elapsed;
 	time_t		current_time;
-	time_t		last_monitor_time;
-	ulint		mutex_skipped;
-	ibool		last_srv_print_monitor;
+	static srv_monitor_state_t state;
 
 	ut_ad(!srv_read_only_mode);
 
-#ifdef UNIV_DEBUG_THREAD_CREATION
-	ib::info() << "Lock timeout thread starts, id "
-		<< os_thread_pf(os_thread_get_curr_id());
-#endif /* UNIV_DEBUG_THREAD_CREATION */
-
-#ifdef UNIV_PFS_THREAD
-	pfs_register_thread(srv_monitor_thread_key);
-#endif /* UNIV_PFS_THREAD */
-
-	current_time = time(NULL);
-	srv_last_monitor_time = current_time;
-	last_monitor_time = current_time;
-	mutex_skipped = 0;
-	last_srv_print_monitor = srv_print_innodb_monitor;
-loop:
-	/* Wake up every 5 seconds to see if we need to print
-	monitor information or if signalled at shutdown. */
-
-	sig_count = os_event_reset(srv_monitor_event);
-
-	os_event_wait_time_low(srv_monitor_event, 5000000, sig_count);
-
 	current_time = time(NULL);
 
-	time_elapsed = difftime(current_time, last_monitor_time);
+	time_elapsed = difftime(current_time, state.last_monitor_time);
 
 	if (time_elapsed > 15) {
-		last_monitor_time = current_time;
+		state.last_monitor_time = current_time;
 
 		if (srv_print_innodb_monitor) {
 			/* Reset mutex_skipped counter everytime
@@ -1762,21 +1740,21 @@ loop:
 			ensure we will not be blocked by lock_sys.mutex
 			for short duration information printing,
 			such as requested by sync_array_print_long_waits() */
-			if (!last_srv_print_monitor) {
-				mutex_skipped = 0;
-				last_srv_print_monitor = TRUE;
+			if (!state.last_srv_print_monitor) {
+				state.mutex_skipped = 0;
+				state.last_srv_print_monitor = true;
 			}
 
 			if (!srv_printf_innodb_monitor(stderr,
-						MUTEX_NOWAIT(mutex_skipped),
+						MUTEX_NOWAIT(state.mutex_skipped),
 						NULL, NULL)) {
-				mutex_skipped++;
+				state.mutex_skipped++;
 			} else {
 				/* Reset the counter */
-				mutex_skipped = 0;
+				state.mutex_skipped = 0;
 			}
 		} else {
-			last_srv_print_monitor = FALSE;
+			state.last_monitor_time = 0;
 		}
 
 
@@ -1787,11 +1765,11 @@ loop:
 			mutex_enter(&srv_monitor_file_mutex);
 			rewind(srv_monitor_file);
 			if (!srv_printf_innodb_monitor(srv_monitor_file,
-						MUTEX_NOWAIT(mutex_skipped),
+						MUTEX_NOWAIT(state.mutex_skipped),
 						NULL, NULL)) {
-				mutex_skipped++;
+				state.mutex_skipped++;
 			} else {
-				mutex_skipped = 0;
+				state.mutex_skipped = 0;
 			}
 
 			os_file_set_eof(srv_monitor_file);
@@ -1800,27 +1778,6 @@ loop:
 	}
 
 	srv_refresh_innodb_monitor_stats();
-
-	if (srv_shutdown_state != SRV_SHUTDOWN_NONE) {
-		goto exit_func;
-	}
-
-	if (srv_print_innodb_monitor
-	    || srv_print_innodb_lock_monitor) {
-		goto loop;
-	}
-
-	goto loop;
-
-exit_func:
-	srv_monitor_active = false;
-
-	/* We count the number of threads in os_thread_exit(). A created
-	thread should always use that to exit and not use return() to exit. */
-
-	os_thread_exit();
-
-	OS_THREAD_DUMMY_RETURN;
 }
 
 /*********************************************************************//**

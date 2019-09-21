@@ -841,17 +841,12 @@ srv_get_active_thread_type(void);
 
 extern "C" {
 
-/*********************************************************************//**
-A thread which prints the info output by various InnoDB monitors.
-@return a dummy parameter */
-os_thread_ret_t
-DECLARE_THREAD(srv_monitor_thread)(
-/*===============================*/
-	void*	arg);	/*!< in: a dummy parameter required by
-			os_thread_create */
 
-/*********************************************************************//**
-The periodic master task controlling the server. */
+/** Periodic task which prints the info output by various InnoDB monitors.*/
+void srv_monitor_task(void*);
+
+
+/** The periodic master task controlling the server. */
 void srv_master_task(void *);
 
 
