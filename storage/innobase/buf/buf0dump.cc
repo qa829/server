@@ -805,7 +805,7 @@ buf_load_abort()
 This is the main task for buffer pool dump/load. when scheduled
 either performs a dump or load, depending on server state, state of the variables etc- */
 
-static void buf_dump_load_task(void *)
+static void buf_dump_load_func(void *)
 {
 	ut_ad(!srv_read_only_mode);
 	static bool first_time = true;
@@ -852,23 +852,23 @@ static void buf_dump_load_task(void *)
 }
 
 
-static waitable_task buf_load_dump_task({buf_dump_load_task, nullptr });
+static waitable_task buf_dump_load_task({buf_dump_load_func, nullptr });
 
 /** Start async buffer pool load, if srv_buffer_pool_load_at_startup was set.*/
 void buf_load_at_startup()
 {
 	ut_ad(srv_buffer_pool_load_at_startup);
-	buf_load_dump_task.submit(srv_thread_pool);
+	buf_dump_load_task.submit(srv_thread_pool);
 }
 
 static void buf_do_load_dump()
 {
-	buf_load_dump_task.submit(srv_thread_pool);
+	buf_dump_load_task.submit(srv_thread_pool);
 }
 
 /** Wait for currently running load/dumps to finish*/
 void buf_load_dump_end()
 {
 	ut_ad(SHUTTING_DOWN());
-	buf_load_dump_task.wait(false);
+	buf_dump_load_task.wait(false);
 }
