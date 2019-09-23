@@ -93,15 +93,38 @@ public:
 template <typename T> class circular_queue
 {
 public:
-  circular_queue(size_t N)
+  circular_queue(size_t N = 16)
     : m_capacity(N + 1), m_buffer(m_capacity), m_head(), m_tail()
   {
   }
   bool empty() { return m_head == m_tail; }
   bool full() { return (m_head + 1) % m_capacity == m_tail; }
+  void clear() { m_head = m_tail = 0; }
+  void resize(size_t new_size)
+  {
+    auto current_size = size();
+    if (new_size <= current_size)
+      return;
+    size_t new_capacity = new_size - 1;
+    std::vector<T> new_buffer(new_capacity);
+    /* Figure out faster way to copy*/
+    while (!empty())
+    {
+      T& ele = front();
+      pop();
+      new_buffer.push_back(ele);
+    }
+    m_buffer = new_buffer;
+    m_capacity = new_capacity;
+    m_head = 0;
+    m_tail = m_head + current_size;
+  }
   void push(T ele)
   {
-    assert(!full());
+    if (full())
+    {
+      resize(size() + 1024);
+    }
     m_buffer[m_head] = ele;
     m_head = (m_head + 1) % m_capacity;
   }

@@ -20,6 +20,7 @@ ADD_LIBRARY(tpool STATIC
   CMakeLists.txt
   tpool.h
   tpool_generic.cc
+  execution_environment.cc
   ${EXTRA_SOURCES}
 )
 

@@ -208,12 +208,6 @@ extern const char	srv_mysql50_table_name_prefix[10];
 Set after setting srv_print_innodb_monitor. */
 extern os_event_t	srv_monitor_event;
 
-
-
-/** Event for waking up buf_dump_thread. Not protected by a mutex.
-Set on shutdown or by buf_dump_start() or buf_load_start(). */
-extern os_event_t	srv_buf_dump_event;
-
 /** The buffer pool resize thread waits on this event. */
 extern os_event_t	srv_buf_resize_event;
 
@@ -504,8 +498,6 @@ extern ibool	srv_print_verbose_log;
 
 extern bool	srv_monitor_active;
 
-/* TRUE during the lifetime of the buffer pool dump/load thread */
-extern bool	srv_buf_dump_thread_active;
 
 /* true during the lifetime of the buffer pool resize thread */
 extern bool	srv_buf_resize_thread_active;

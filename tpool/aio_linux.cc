@@ -56,7 +56,7 @@ class aio_linux : public aio
   {
     linux_iocb* cb = (linux_iocb*)param;
     aio_linux* aio = (aio_linux*)cb->m_aiocb.m_internal;
-    cb->m_aiocb.m_callback(&cb->m_aiocb, cb->m_ret_len, cb->m_err);
+    cb->m_aiocb.execute_callback();
     aio->m_cache.put(cb);
   }
 
@@ -86,7 +86,7 @@ class aio_linux : public aio
           iocb->m_err = 0;
         }
 
-        aio->m_pool->submit_task({ execute_io_completion, iocb });
+        aio->m_pool->submit_task({ execute_io_completion, iocb, iocb->m_env });
         continue;
       }
       switch (ret)

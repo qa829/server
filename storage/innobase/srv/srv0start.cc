@@ -179,7 +179,6 @@ static os_thread_id_t	thread_ids[SRV_MAX_N_IO_THREADS + 6 + 32];
 
 /** Thead handles */
 static os_thread_t	thread_handles[SRV_MAX_N_IO_THREADS + 6 + 32];
-static os_thread_t	buf_dump_thread_handle;
 static os_thread_t	dict_stats_thread_handle;
 /** Status variables, is thread started ?*/
 static bool		thread_started[SRV_MAX_N_IO_THREADS + 6 + 32] = {false};
@@ -2211,10 +2210,7 @@ skip_monitors:
 		trx_temp_rseg_create();
 
 		if (srv_force_recovery < SRV_FORCE_NO_BACKGROUND) {
-			srv_master_timer.reset(
-				srv_thread_pool->create_timer(
-				{ srv_master_task, nullptr }));
-			srv_master_timer->set_time(0, 1000);
+			srv_start_periodic_timer(srv_master_timer, srv_master_task, 1000);
 		}
 	}
 
@@ -2289,10 +2285,9 @@ skip_monitors:
 		if (!get_wsrep_recovery()) {
 #endif /* WITH_WSREP */
 
-		/* Create the buffer pool dump/load thread */
-		srv_buf_dump_thread_active = true;
-		buf_dump_thread_handle=
-			os_thread_create(buf_dump_thread, NULL, NULL);
+		/* Start buffer pool dump/load task */
+		if (srv_buffer_pool_load_at_startup)
+			buf_load_at_startup();
 
 #ifdef WITH_WSREP
 		} else {
@@ -2498,3 +2493,5 @@ srv_get_meta_data_filename(
 
 	ut_free(path);
 }
+
+

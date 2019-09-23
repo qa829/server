@@ -85,7 +85,6 @@ UNIV_INTERN ulong	srv_fatal_semaphore_wait_threshold =  DEFAULT_SRV_FATAL_SEMAPH
 in microseconds, in order to reduce the lagging of the purge thread. */
 ulint	srv_dml_needed_delay;
 
-bool	srv_buf_dump_thread_active;
 bool	srv_dict_stats_thread_active;
 bool	srv_buf_resize_thread_active;
 
@@ -610,10 +609,7 @@ bool purge_sys_t::running()
 /** threadpool timer for srv_error_monitor_task(). */
 std::unique_ptr<tpool::timer> srv_error_monitor_timer;
 std::unique_ptr<tpool::timer> srv_monitor_timer;
-
-/** Event for waking up buf_dump_thread. Not protected by a mutex.
-Set on shutdown or by buf_dump_start() or buf_load_start(). */
-os_event_t	srv_buf_dump_event;
+std::unique_ptr<tpool::execution_environment> srv_timers_env(tpool::create_execution_environment());
 
 /** Event to signal the buffer pool resize thread */
 os_event_t	srv_buf_resize_event;
@@ -1049,8 +1045,6 @@ srv_init()
 			ut_a(slot->event);
 		}
 
-		srv_buf_dump_event = os_event_create(0);
-
 		buf_flush_event = os_event_create("buf_flush_event");
 
 		UT_LIST_INIT(srv_sys.tasks, &que_thr_t::queue);
@@ -1109,7 +1103,6 @@ srv_free(void)
 		for (ulint i = 0; i < srv_sys.n_sys_threads; ++i) {
 			os_event_destroy(srv_sys.sys_threads[i].event);
 		}
-		os_event_destroy(srv_buf_dump_event);
 		os_event_destroy(buf_flush_event);
 	}
 
@@ -1718,21 +1711,22 @@ struct srv_monitor_state_t
 	}
 };
 
+static srv_monitor_state_t monitor_state;
+
 /** A task which prints the info output by various InnoDB monitors.*/
 void srv_monitor_task(void*)
 {
 	double		time_elapsed;
 	time_t		current_time;
-	static srv_monitor_state_t state;
 
 	ut_ad(!srv_read_only_mode);
 
 	current_time = time(NULL);
 
-	time_elapsed = difftime(current_time, state.last_monitor_time);
+	time_elapsed = difftime(current_time, monitor_state.last_monitor_time);
 
 	if (time_elapsed > 15) {
-		state.last_monitor_time = current_time;
+		monitor_state.last_monitor_time = current_time;
 
 		if (srv_print_innodb_monitor) {
 			/* Reset mutex_skipped counter everytime
@@ -1740,21 +1734,21 @@ void srv_monitor_task(void*)
 			ensure we will not be blocked by lock_sys.mutex
 			for short duration information printing,
 			such as requested by sync_array_print_long_waits() */
-			if (!state.last_srv_print_monitor) {
-				state.mutex_skipped = 0;
-				state.last_srv_print_monitor = true;
+			if (!monitor_state.last_srv_print_monitor) {
+				monitor_state.mutex_skipped = 0;
+				monitor_state.last_srv_print_monitor = true;
 			}
 
 			if (!srv_printf_innodb_monitor(stderr,
-						MUTEX_NOWAIT(state.mutex_skipped),
+						MUTEX_NOWAIT(monitor_state.mutex_skipped),
 						NULL, NULL)) {
-				state.mutex_skipped++;
+				monitor_state.mutex_skipped++;
 			} else {
 				/* Reset the counter */
-				state.mutex_skipped = 0;
+				monitor_state.mutex_skipped = 0;
 			}
 		} else {
-			state.last_monitor_time = 0;
+			monitor_state.last_monitor_time = 0;
 		}
 
 
@@ -1765,11 +1759,11 @@ void srv_monitor_task(void*)
 			mutex_enter(&srv_monitor_file_mutex);
 			rewind(srv_monitor_file);
 			if (!srv_printf_innodb_monitor(srv_monitor_file,
-						MUTEX_NOWAIT(state.mutex_skipped),
+						MUTEX_NOWAIT(monitor_state.mutex_skipped),
 						NULL, NULL)) {
-				state.mutex_skipped++;
+				monitor_state.mutex_skipped++;
 			} else {
-				state.mutex_skipped = 0;
+				monitor_state.mutex_skipped = 0;
 			}
 
 			os_file_set_eof(srv_monitor_file);

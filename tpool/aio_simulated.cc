@@ -155,8 +155,9 @@ public:
       err= errno;
 #endif
     }
-
-    cb->m_callback(cb, ret_len, err);
+    cb->m_ret_len = ret_len;
+    cb->m_err = err;
+    cb->execute_callback();
     ((simulated_aio *) cb->m_internal)->m_cache.put(cb);
   }
 

@@ -38,13 +38,8 @@ namespace tpool
 class tpool_generic_win_aio : public aio
 {
 
-  struct generic_win_aiocb : win_aio_cb
-  {
-    int m_err;
-    int m_ret_len;
-  };
   /* AIO control block cache.*/
-  cache<generic_win_aiocb> m_cache;
+  cache<win_aio_cb> m_cache;
 
   /* Thread that does collects completion status from the completion port. */
   std::thread m_thread;
@@ -62,9 +57,9 @@ public:
     m_thread = std::thread(aio_completion_thread_proc, this);
   }
 
-  void io_completion(generic_win_aiocb* cb)
+  void io_completion(win_aio_cb* cb)
   {
-    cb->m_aiocb.m_callback(&cb->m_aiocb, cb->m_ret_len, cb->m_err);
+    cb->m_aiocb.execute_callback();
     m_cache.put(cb);
   }
 
@@ -73,9 +68,10 @@ public:
   */
   static void io_completion_task(void* data)
   {
-    auto cb = (generic_win_aiocb*)data;
+    auto cb = (win_aio_cb*)data;
     auto aio = (tpool_generic_win_aio*)cb->m_aiocb.m_internal;
-    aio->io_completion(cb);
+    cb->m_aiocb.m_callback(&cb->m_aiocb);
+    aio->m_cache.put(cb);
   }
 
   void completion_thread_work()
@@ -83,24 +79,24 @@ public:
     for (;;)
     {
       DWORD n_bytes;
-      generic_win_aiocb* win_aiocb;
+      win_aio_cb* win_aiocb;
       ULONG_PTR key;
       if (!GetQueuedCompletionStatus(m_completion_port, &n_bytes, &key,
         (LPOVERLAPPED*)& win_aiocb, INFINITE))
         break;
 
-      win_aiocb->m_err = 0;
-      win_aiocb->m_ret_len = n_bytes;
+      win_aiocb->m_aiocb.m_err = 0;
+      win_aiocb->m_aiocb.m_ret_len = n_bytes;
 
       if (n_bytes != win_aiocb->m_aiocb.m_len)
       {
         if (GetOverlappedResult(win_aiocb->m_aiocb.m_fh, win_aiocb,
-          (LPDWORD)& win_aiocb->m_ret_len, FALSE))
+          (LPDWORD)& win_aiocb->m_aiocb.m_ret_len, FALSE))
         {
-          win_aiocb->m_err = GetLastError();
+          win_aiocb->m_aiocb.m_err = GetLastError();
         }
       }
-      m_pool->submit_task({ io_completion_task, win_aiocb });
+      m_pool->submit_task({ io_completion_task, win_aiocb, win_aiocb->m_aiocb.m_env });
     }
   }
 
@@ -118,7 +114,7 @@ public:
 
   virtual int submit_io(const aiocb* aiocb) override
   {
-    generic_win_aiocb* cb = m_cache.get();
+    win_aio_cb* cb = m_cache.get();
     memset(cb, 0, sizeof(OVERLAPPED));
     cb->m_aiocb = *aiocb;
     cb->m_aiocb.m_internal = this;

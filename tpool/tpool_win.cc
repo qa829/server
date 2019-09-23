@@ -179,8 +179,9 @@ class thread_pool_win : public thread_pool
       win_aio_cb* cb = (win_aio_cb*)overlapped;
       native_aio* aio = (native_aio*)cb->m_aiocb.m_internal;
       tls_data.callback_prolog(&aio->m_pool);
-
-      cb->m_aiocb.m_callback(&cb->m_aiocb, (int)nbytes, (int)io_result);
+      cb->m_aiocb.m_err = io_result;
+      cb->m_aiocb.m_ret_len = (int)nbytes;
+      cb->m_aiocb.execute_callback();
       aio->m_cache.put(cb);
     }
 
@@ -255,7 +256,7 @@ public:
 
     entry->m_pool->m_task_cache.put(entry);
 
-    task.m_func(task.m_arg);
+    task.execute();
   }
   virtual void submit_task(const task &task) override
   {

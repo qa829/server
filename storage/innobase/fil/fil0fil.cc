@@ -4340,7 +4340,7 @@ fil_io(
 
 /* Callback for AIO completion */
 void
-fil_aio_callback(const tpool::aiocb *cb, int ret_len, int err)
+fil_aio_callback(const tpool::aiocb *cb)
 {
 	os_aio_userdata_t *data=(os_aio_userdata_t *)cb->m_userdata;
 	fil_node_t* node= data->node;
@@ -4349,7 +4349,7 @@ fil_aio_callback(const tpool::aiocb *cb, int ret_len, int err)
 
 	ut_ad(fil_validate_skip());
 
-	ut_a(err == DB_SUCCESS);
+	ut_a(cb->m_err == DB_SUCCESS);
 
 	if (node == NULL) {
 		ut_ad(srv_shutdown_state == SRV_SHUTDOWN_EXIT_THREADS);

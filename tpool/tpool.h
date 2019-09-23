@@ -44,17 +44,42 @@ namespace tpool
  Task callback function
  */
 typedef void (*callback_func)(void *);
+class task;
 
-/**
+/* A class that can be used e.g for rate limiting,
+or waiting for finished callbacks. */
+class execution_environment
+{
+public:
+  virtual void execute(task& t) = 0;
+  virtual void wait(bool cancel_pending) = 0;
+  virtual void set_max_concurrency(unsigned int) = 0;
+  virtual ~execution_environment() {};
+};
+
+/* Task executor limiting concurrency.*/
+extern execution_environment* create_execution_environment();
+  /**
  Task, a void function with void *argument.
 */
-struct task
+class task
 {
+private:
   callback_func m_func;
   void *m_arg;
-  void execute()
+  execution_environment* m_env;
+public:
+  task() {};
+  task(callback_func func, void* arg, execution_environment* env = nullptr) :
+    m_func(func), m_arg(arg), m_env(env) {};
+  void* get_arg() { return m_arg; }
+  callback_func get_func() { return m_func; }
+  inline void execute()
   {
-    m_func(m_arg);
+    if (m_env)
+      m_env->execute(*this);
+    else
+      m_func(m_arg);
   }
 };
 
@@ -66,9 +91,6 @@ enum aio_opcode
 const int MAX_AIO_USERDATA_LEN= 40;
 struct aiocb;
 
-/** IO callback function */
-typedef void (*aio_callback_func)(const aiocb *cb, int ret_len, int err);
-
 /** IO control block, includes parameters for the IO, and the callback*/
 struct aiocb
 {
@@ -77,9 +99,19 @@ struct aiocb
   unsigned long long m_offset;
   void *m_buffer;
   unsigned int m_len;
-  aio_callback_func m_callback;
+  callback_func m_callback;
+  execution_environment* m_env;
+  /* Returned length and error code*/
+  int m_ret_len;
+  int m_err;
   void *m_internal;
   char m_userdata[MAX_AIO_USERDATA_LEN];
+
+  void execute_callback()
+  {
+    task t(m_callback, this);
+    t.execute();
+  }
 };
 
 #ifdef _WIN32

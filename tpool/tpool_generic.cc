@@ -178,9 +178,6 @@ class thread_pool_generic : public thread_pool
   /** Another condition variable, used in pool shutdown-*/
   std::condition_variable m_cv_no_threads;
 
-  /** Condition variable to signal that task queue is not full*/
-  std::condition_variable m_cv_queue_not_full;
-
   /** Condition variable for the timer thread. Signaled on shutdown.*/
   std::condition_variable m_cv_timer;
 
@@ -286,7 +283,7 @@ public:
       else
       {
         /* run in "timer" thread */
-        thr_timer_init(this, m_task.m_func, m_task.m_arg);
+        thr_timer_init(this, m_task.get_func(), m_task.get_arg());
       }
     }
 
@@ -370,7 +367,6 @@ bool thread_pool_generic::wait_for_tasks(std::unique_lock<std::mutex> &lk,
 */
 bool thread_pool_generic::get_task(worker_data *thread_var, task *t)
 {
-  bool task_queue_was_full = false;
   std::unique_lock<std::mutex> lk(m_mtx);
  
   if (thread_var->is_long_task() && m_long_tasks_count)
@@ -390,7 +386,6 @@ bool thread_pool_generic::get_task(worker_data *thread_var, task *t)
     if (thread_var->m_wake_reason == WAKE_REASON_TASK)
     {
       *t= thread_var->m_task;
-      thread_var->m_task.m_func= 0;
       goto end;
     }
 
@@ -399,19 +394,10 @@ bool thread_pool_generic::get_task(worker_data *thread_var, task *t)
   }
 
   /* Dequeue from the task queue.*/
-  task_queue_was_full= m_task_queue.full();
   *t= m_task_queue.front();
   m_task_queue.pop();
   m_tasks_dequeued++;
 
-  if (task_queue_was_full)
-  {
-    /*
-      There may be threads handing in submit(),
-      because the task queue was full. Wake them
-    */
-    m_cv_queue_not_full.notify_all();
-  }
 end:
   thread_var->m_state |= worker_data::EXECUTING_TASK;
   thread_var->m_task_start_time = m_timestamp;
@@ -441,7 +427,7 @@ void thread_pool_generic::worker_main(worker_data *thread_var)
 
   while (get_task(thread_var, &task))
   {
-    task.m_func(task.m_arg);
+    task.execute();
   }
 
   if (m_worker_destroy_callback)
@@ -626,11 +612,6 @@ void thread_pool_generic::wake_or_create_thread()
 void thread_pool_generic::submit_task(const task &task)
 {
   std::unique_lock<std::mutex> lk(m_mtx);
-
-  while (m_task_queue.full())
-  {
-    m_cv_queue_not_full.wait(lk);
-  }
   if (m_in_shutdown)
     return;
   m_task_queue.push(task);
@@ -639,7 +620,7 @@ void thread_pool_generic::submit_task(const task &task)
 }
 
 /**
-  Wake  wake up all workers, and wait until they are gone
+  Wake  up all workers, and wait until they are gone
   Stop the timer.
 */
 thread_pool_generic::~thread_pool_generic()

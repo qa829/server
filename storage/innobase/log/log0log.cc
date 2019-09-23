@@ -53,6 +53,7 @@ Created 12/9/1995 Heikki Tuuri
 #include "trx0roll.h"
 #include "srv0mon.h"
 #include "sync0sync.h"
+#include "buf0dump.h"
 #include "tp0tp.h"
 
 /*
@@ -1581,15 +1582,21 @@ logs_empty_and_mark_files_at_shutdown(void)
 	/* Wait until the master thread and all other operations are idle: our
 	algorithm only works if the server is idle at shutdown */
 	srv_shutdown_state = SRV_SHUTDOWN_CLEANUP;
-
+	if (srv_buffer_pool_dump_at_shutdown && srv_fast_shutdown < 2)
+		buf_dump_start();
 	srv_error_monitor_timer.reset();
 	srv_monitor_timer.reset();
 	lock_sys.timeout_timer.reset();
 
+	bool do_srv_shutdown = false;
 	if (srv_master_timer) {
+		do_srv_shutdown = srv_fast_shutdown < 2;
 		srv_master_timer.reset();
-		if (srv_fast_shutdown < 2)
-			srv_shutdown(srv_fast_shutdown == 0);
+	}
+	srv_timers_env->wait(true);
+
+	if (do_srv_shutdown) {
+		srv_shutdown(srv_fast_shutdown == 0);
 	}
 
 loop:
@@ -1599,8 +1606,6 @@ loop:
 	os_event_set(srv_buf_resize_event);
 
 	if (!srv_read_only_mode) {
-		os_event_set(srv_buf_dump_event);
-		lock_sys.timeout_timer.reset();
 		if (dict_stats_event) {
 			os_event_set(dict_stats_event);
 		} else {
@@ -1650,9 +1655,6 @@ loop:
 		goto wait_suspend_loop;
 	} else if (srv_dict_stats_thread_active) {
 		thread_name = "dict_stats_thread";
-	} else if (srv_buf_dump_thread_active) {
-		thread_name = "buf_dump_thread";
-		goto wait_suspend_loop;
 	} else if (btr_defragment_thread_active) {
 		thread_name = "btr_defragment_thread";
 	} else if (srv_fast_shutdown != 2 && trx_rollback_is_active) {
@@ -1696,6 +1698,8 @@ wait_suspend_loop:
 		thread_name = "master thread";
 		goto wait_suspend_loop;
 	}
+
+	buf_load_dump_end();
 
 	/* At this point only page_cleaner should be active. We wait
 	here to let it complete the flushing of the buffer pools

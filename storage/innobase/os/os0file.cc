@@ -3862,13 +3862,13 @@ os_file_get_status(
 }
 
 
-extern void fil_aio_callback(const tpool::aiocb *cb, int ret_len, int err);
+extern void fil_aio_callback(const tpool::aiocb *cb);
 
-static void io_callback(const tpool::aiocb* cb, int ret_len, int err)
+static void io_callback(tpool::aiocb* cb)
 {
   if (cb->m_opcode == tpool::AIO_PWRITE)
     pending_aio_writes--;
-  fil_aio_callback(cb,ret_len, err);
+  fil_aio_callback(cb);
 }
 
 #ifdef LINUX_NATIVE_AIO
@@ -4126,7 +4126,8 @@ os_aio_func(
 
 	tpool::aiocb cb;
 	cb.m_buffer = buf;
-	cb.m_callback = io_callback;
+	cb.m_callback = (tpool::callback_func)io_callback;
+	cb.m_env = 0;
 	cb.m_fh = file.m_file;
 	cb.m_len = (int)n;
 	cb.m_offset = offset;
