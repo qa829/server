@@ -36,28 +36,19 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111 - 1301 USA*/
 namespace tpool
 {
 #ifdef LINUX_NATIVE_AIO
-struct linux_iocb : iocb
-{
-  aiocb m_aiocb;
-  int m_ret_len;
-  int m_err;
-};
 
 class aio_linux : public aio
 {
   int m_max_io_count;
   thread_pool* m_pool;
   io_context_t m_io_ctx;
-  cache<linux_iocb> m_cache;
   bool m_in_shutdown;
   std::thread m_getevent_thread;
 
   static void execute_io_completion(void* param)
   {
-    linux_iocb* cb = (linux_iocb*)param;
-    aio_linux* aio = (aio_linux*)cb->m_aiocb.m_internal;
-    cb->m_aiocb.execute_callback();
-    aio->m_cache.put(cb);
+    aiocb* cb = (aiocb*)param;
+    cb->execute_callback();
   }
 
   static void getevent_thread_routine(aio_linux* aio)
@@ -73,7 +64,7 @@ class aio_linux : public aio
 
       if (ret > 0)
       {
-        linux_iocb* iocb = (linux_iocb*)event.obj;
+        aiocb* iocb = (aiocb*)event.obj;
         long long res = event.res;
         if (res < 0)
         {
@@ -86,7 +77,7 @@ class aio_linux : public aio
           iocb->m_err = 0;
         }
 
-        aio->m_pool->submit_task({ execute_io_completion, iocb, iocb->m_env });
+        aio->m_pool->submit_task({ execute_io_completion, iocb});
         continue;
       }
       switch (ret)
@@ -107,7 +98,7 @@ class aio_linux : public aio
 public:
   aio_linux(io_context_t ctx, thread_pool* pool, size_t max_count)
     : m_max_io_count(max_count), m_pool(pool), m_io_ctx(ctx),
-    m_cache(max_count), m_in_shutdown(), m_getevent_thread(getevent_thread_routine, this)
+    m_in_shutdown(), m_getevent_thread(getevent_thread_routine, this)
   {
   }
 
@@ -119,18 +110,15 @@ public:
   }
 
   // Inherited via aio
-  virtual int submit_io(const aiocb* aiocb) override
+  virtual int submit_io(aiocb* cb) override
   {
-    linux_iocb* cb = m_cache.get();
-    memcpy(&cb->m_aiocb, aiocb, sizeof(*aiocb));
 
-    if (aiocb->m_opcode == AIO_PREAD)
-      io_prep_pread(cb, aiocb->m_fh, aiocb->m_buffer, aiocb->m_len,
-        aiocb->m_offset);
+    if (cb->m_opcode == AIO_PREAD)
+      io_prep_pread((iocb *)cb, cb->m_fh, cb->m_buffer, cb->m_len,
+        cb->m_offset);
     else
-      io_prep_pwrite(cb, aiocb->m_fh, aiocb->m_buffer, aiocb->m_len,
-        aiocb->m_offset);
-    cb->m_aiocb.m_internal = this;
+      io_prep_pwrite((iocb *)cb, cb->m_fh, cb->m_buffer, cb->m_len,
+        cb->m_offset);
 
     int ret;
     ret = io_submit(m_io_ctx, 1, (iocb * *)& cb);

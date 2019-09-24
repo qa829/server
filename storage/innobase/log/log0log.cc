@@ -1582,7 +1582,7 @@ logs_empty_and_mark_files_at_shutdown(void)
 	/* Wait until the master thread and all other operations are idle: our
 	algorithm only works if the server is idle at shutdown */
 	srv_shutdown_state = SRV_SHUTDOWN_CLEANUP;
-	if (srv_buffer_pool_dump_at_shutdown && srv_fast_shutdown < 2)
+	if (srv_buffer_pool_dump_at_shutdown && !srv_read_only_mode && srv_fast_shutdown < 2)
 		buf_dump_start();
 	srv_error_monitor_timer.reset();
 	srv_monitor_timer.reset();

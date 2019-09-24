@@ -123,11 +123,10 @@ int pwrite(const native_file_handle &h, void *buf, size_t count,
 class simulated_aio : public aio
 {
   thread_pool *m_pool;
-  cache<aiocb> m_cache;
 
 public:
-  simulated_aio(thread_pool *tp, int max_io_size)
-      : m_pool(tp), m_cache(max_io_size, NOTIFY_ONE)
+  simulated_aio(thread_pool *tp)
+      : m_pool(tp)
   {
   }
 
@@ -157,25 +156,21 @@ public:
     }
     cb->m_ret_len = ret_len;
     cb->m_err = err;
-    cb->execute_callback();
-    ((simulated_aio *) cb->m_internal)->m_cache.put(cb);
+    cb->m_callback(cb);
   }
 
-  virtual int submit_io(const aiocb *aiocb) override
+  virtual int submit_io(aiocb *aiocb) override
   {
-    auto cb= m_cache.get();
-    *cb= *aiocb;
-    cb->m_internal= this;
-    m_pool->submit_task({simulated_aio_callback, cb});
+    m_pool->submit_task({ simulated_aio_callback, (void*)aiocb, aiocb->m_env });
     return 0;
   }
   virtual int bind(native_file_handle &fd) override { return 0; }
   virtual int unbind(const native_file_handle &fd) override { return 0; }
 };
 
-aio *create_simulated_aio(thread_pool *tp, int max_aio)
+aio *create_simulated_aio(thread_pool *tp)
 {
-  return new simulated_aio(tp, max_aio);
+  return new simulated_aio(tp);
 }
 
 } // namespace tpool

@@ -124,45 +124,37 @@ class thread_pool_win : public thread_pool
   class native_aio : public aio
   {
     thread_pool_win& m_pool;
-    /**
-      The cache of the IO control blocks. Control block is acquired on each
-      submit_io, and released after the callback completion function is executed.
-    */
-    cache<win_aio_cb> m_cache;
-
+  
   public:
     native_aio(thread_pool_win &pool, int max_io)
-      : m_pool(pool), m_cache(max_io)
+      : m_pool(pool)
     {
     }
 
     /**
      Submit async IO.
     */
-    virtual int submit_io(const aiocb* aiocb) override
+    virtual int submit_io(aiocb* cb) override
     {
-      win_aio_cb* cb = m_cache.get();
-      memset(cb, 0, sizeof(OVERLAPPED));
-      cb->m_aiocb = *aiocb;
-      cb->m_aiocb.m_internal = this;
+      memset((aiocb *)cb, 0, sizeof(OVERLAPPED));
 
       ULARGE_INTEGER uli;
-      uli.QuadPart = aiocb->m_offset;
+      uli.QuadPart = cb->m_offset;
       cb->Offset = uli.LowPart;
       cb->OffsetHigh = uli.HighPart;
-
-      StartThreadpoolIo(aiocb->m_fh.m_ptp_io);
+      cb->m_internal = this;
+      StartThreadpoolIo(cb->m_fh.m_ptp_io);
 
       BOOL ok;
-      if (aiocb->m_opcode == AIO_PREAD)
-        ok = ReadFile(aiocb->m_fh.m_handle, aiocb->m_buffer, aiocb->m_len, 0, cb);
+      if (cb->m_opcode == AIO_PREAD)
+        ok = ReadFile(cb->m_fh.m_handle, cb->m_buffer, cb->m_len, 0, cb);
       else
-        ok = WriteFile(aiocb->m_fh.m_handle, aiocb->m_buffer, aiocb->m_len, 0, cb);
+        ok = WriteFile(cb->m_fh.m_handle, cb->m_buffer, cb->m_len, 0, cb);
 
       if (ok || (GetLastError() == ERROR_IO_PENDING))
         return 0;
 
-      CancelThreadpoolIo(aiocb->m_fh.m_ptp_io);
+      CancelThreadpoolIo(cb->m_fh.m_ptp_io);
       return -1;
     }
 
@@ -176,13 +168,12 @@ class thread_pool_win : public thread_pool
       ULONG io_result, ULONG_PTR nbytes,
       PTP_IO io)
     {
-      win_aio_cb* cb = (win_aio_cb*)overlapped;
-      native_aio* aio = (native_aio*)cb->m_aiocb.m_internal;
+      aiocb* cb = (aiocb*)overlapped;
+      native_aio* aio = (native_aio*)cb->m_internal;
       tls_data.callback_prolog(&aio->m_pool);
-      cb->m_aiocb.m_err = io_result;
-      cb->m_aiocb.m_ret_len = (int)nbytes;
-      cb->m_aiocb.execute_callback();
-      aio->m_cache.put(cb);
+      cb->m_err = io_result;
+      cb->m_ret_len = (int)nbytes;
+      cb->execute_callback();
     }
 
     /**

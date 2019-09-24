@@ -37,10 +37,6 @@ namespace tpool
 */
 class tpool_generic_win_aio : public aio
 {
-
-  /* AIO control block cache.*/
-  cache<win_aio_cb> m_cache;
-
   /* Thread that does collects completion status from the completion port. */
   std::thread m_thread;
 
@@ -51,16 +47,10 @@ class tpool_generic_win_aio : public aio
   thread_pool* m_pool;
 public:
  
-  tpool_generic_win_aio(thread_pool* pool, int max_io) : m_pool(pool), m_cache(max_io)
+  tpool_generic_win_aio(thread_pool* pool, int max_io) : m_pool(pool)
   {
     m_completion_port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);
     m_thread = std::thread(aio_completion_thread_proc, this);
-  }
-
-  void io_completion(win_aio_cb* cb)
-  {
-    cb->m_aiocb.execute_callback();
-    m_cache.put(cb);
   }
 
   /**
@@ -68,10 +58,8 @@ public:
   */
   static void io_completion_task(void* data)
   {
-    auto cb = (win_aio_cb*)data;
-    auto aio = (tpool_generic_win_aio*)cb->m_aiocb.m_internal;
-    cb->m_aiocb.m_callback(&cb->m_aiocb);
-    aio->m_cache.put(cb);
+    auto cb = (aiocb*)data;
+    cb->execute_callback();
   }
 
   void completion_thread_work()
@@ -79,24 +67,24 @@ public:
     for (;;)
     {
       DWORD n_bytes;
-      win_aio_cb* win_aiocb;
+      aiocb* aiocb;
       ULONG_PTR key;
       if (!GetQueuedCompletionStatus(m_completion_port, &n_bytes, &key,
-        (LPOVERLAPPED*)& win_aiocb, INFINITE))
+        (LPOVERLAPPED*)& aiocb, INFINITE))
         break;
 
-      win_aiocb->m_aiocb.m_err = 0;
-      win_aiocb->m_aiocb.m_ret_len = n_bytes;
+      aiocb->m_err = 0;
+      aiocb->m_ret_len = n_bytes;
 
-      if (n_bytes != win_aiocb->m_aiocb.m_len)
+      if (n_bytes != aiocb->m_len)
       {
-        if (GetOverlappedResult(win_aiocb->m_aiocb.m_fh, win_aiocb,
-          (LPDWORD)& win_aiocb->m_aiocb.m_ret_len, FALSE))
+        if (GetOverlappedResult(aiocb->m_fh, aiocb,
+          (LPDWORD)& aiocb->m_ret_len, FALSE))
         {
-          win_aiocb->m_aiocb.m_err = GetLastError();
+           aiocb->m_err = GetLastError();
         }
       }
-      m_pool->submit_task({ io_completion_task, win_aiocb, win_aiocb->m_aiocb.m_env });
+      m_pool->submit_task({ io_completion_task, aiocb, aiocb->m_env });
     }
   }
 
@@ -112,23 +100,21 @@ public:
     m_thread.join();
   }
 
-  virtual int submit_io(const aiocb* aiocb) override
+  virtual int submit_io(aiocb* cb) override
   {
-    win_aio_cb* cb = m_cache.get();
     memset(cb, 0, sizeof(OVERLAPPED));
-    cb->m_aiocb = *aiocb;
-    cb->m_aiocb.m_internal = this;
+    cb->m_internal = this;
 
     ULARGE_INTEGER uli;
-    uli.QuadPart = aiocb->m_offset;
+    uli.QuadPart = cb->m_offset;
     cb->Offset = uli.LowPart;
     cb->OffsetHigh = uli.HighPart;
 
     BOOL ok;
-    if (aiocb->m_opcode == AIO_PREAD)
-      ok = ReadFile(aiocb->m_fh.m_handle, aiocb->m_buffer, aiocb->m_len, 0, cb);
+    if (cb->m_opcode == AIO_PREAD)
+      ok = ReadFile(cb->m_fh.m_handle, cb->m_buffer, cb->m_len, 0, cb);
     else
-      ok = WriteFile(aiocb->m_fh.m_handle, aiocb->m_buffer, aiocb->m_len, 0, cb);
+      ok = WriteFile(cb->m_fh.m_handle, cb->m_buffer, cb->m_len, 0, cb);
 
     if (ok || (GetLastError() == ERROR_IO_PENDING))
       return 0;

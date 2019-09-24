@@ -15,6 +15,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111 - 1301 USA*/
 
 #pragma once
 #include <memory> /* unique_ptr */
+#ifdef LINUX_NATIVE_AIO
+#include <libaio.h>
+#endif
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -92,7 +95,13 @@ const int MAX_AIO_USERDATA_LEN= 40;
 struct aiocb;
 
 /** IO control block, includes parameters for the IO, and the callback*/
+
 struct aiocb
+#ifdef _WIN32
+  :OVERLAPPED
+#elif defined HAVE_LINUX_NATIVE_AIO
+  :iocb
+#endif
 {
   native_file_handle m_fh;
   aio_opcode m_opcode;
@@ -114,12 +123,6 @@ struct aiocb
   }
 };
 
-#ifdef _WIN32
-struct win_aio_cb : OVERLAPPED
-{
-  aiocb m_aiocb;
-};
-#endif
 
 /**
  AIO interface
@@ -131,7 +134,7 @@ public:
     Submit asyncronous IO.
     On completion, cb->m_callback is executed.
   */
-  virtual int submit_io(const aiocb *cb)= 0;
+  virtual int submit_io(aiocb *cb)= 0;
   /** "Bind" file to AIO handler (used on Windows only) */
   virtual int bind(native_file_handle &fd)= 0;
   /** "Unind" file to AIO handler (used on Windows only) */
@@ -149,7 +152,7 @@ public:
 
 class thread_pool;
 
-extern aio *create_simulated_aio(thread_pool *tp, int max_io);
+extern aio *create_simulated_aio(thread_pool *tp);
 
 class thread_pool
 {
@@ -181,7 +184,7 @@ public:
     if (use_native_aio)
       m_aio.reset(create_native_aio(max_io));
     if (!m_aio)
-      m_aio.reset(create_simulated_aio(this, max_io));
+      m_aio.reset(create_simulated_aio(this));
     return !m_aio ? -1 : 0;
   }
   void disable_aio()
@@ -190,7 +193,7 @@ public:
   }
   int bind(native_file_handle &fd) { return m_aio->bind(fd); }
   void unbind(const native_file_handle &fd) { m_aio->unbind(fd); }
-  int submit_io(const aiocb *cb) { return m_aio->submit_io(cb); }
+  int submit_io(aiocb *cb) { return m_aio->submit_io(cb); }
   virtual ~thread_pool() {}
 };
 const int DEFAULT_MIN_POOL_THREADS= 1;

@@ -53,6 +53,7 @@ Created 10/21/1995 Heikki Tuuri
 #include "os0thread.h"
 
 #include <vector>
+#include <tpool_structs.h>
 
 #ifdef LINUX_NATIVE_AIO
 #include <libaio.h>
@@ -79,7 +80,9 @@ Created 10/21/1995 Heikki Tuuri
 
 #include <tp0tp.h>
 
-static tpool::thread_pool *read_pool;
+static tpool::thread_pool* read_pool;
+tpool::cache<tpool::aiocb>* read_cache;
+tpool::cache<tpool::aiocb>* write_cache;
 
 static Atomic_counter<int> pending_aio_writes;
 
@@ -3866,9 +3869,19 @@ extern void fil_aio_callback(const tpool::aiocb *cb);
 
 static void io_callback(tpool::aiocb* cb)
 {
-  if (cb->m_opcode == tpool::AIO_PWRITE)
-    pending_aio_writes--;
-  fil_aio_callback(cb);
+	bool is_read = cb->m_opcode == tpool::AIO_PREAD;
+	fil_aio_callback(cb);
+
+	/* Return cb back to cache*/
+	if (is_read)
+	{
+		read_cache->put(cb);
+	}
+	else
+	{
+		pending_aio_writes--;
+		write_cache->put(cb);
+	}
 }
 
 #ifdef LINUX_NATIVE_AIO
@@ -4029,10 +4042,12 @@ bool os_aio_init(ulint n_reader_threads, ulint n_writer_threads, ulint)
 		ret = srv_thread_pool->configure_aio(srv_use_native_aio, max_write_events);
 		DBUG_ASSERT(!ret);
 	}
+	write_cache = new tpool::cache<tpool::aiocb>(max_write_events);
 
 	read_pool = tpool::create_thread_pool_generic((int)n_reader_threads, (int)n_reader_threads);
 	read_pool->set_thread_callbacks(thread_pool_thread_init, thread_pool_thread_destroy);
 	read_pool->configure_aio(false, max_read_events);
+	read_cache = new tpool::cache<tpool::aiocb>(max_read_events);
 
 	return true;
 }
@@ -4044,6 +4059,8 @@ void os_aio_free(void)
 
 	delete read_pool;
 	read_pool = nullptr;
+	delete read_cache;
+	delete write_cache;
 }
 
 /** Waits until there are no pending writes. There can
@@ -4124,19 +4141,19 @@ os_aio_func(
 	compile_time_assert(sizeof(os_aio_userdata_t) <= tpool::MAX_AIO_USERDATA_LEN);
 	os_aio_userdata_t userdata{m1,type,m2};
 
-	tpool::aiocb cb;
-	cb.m_buffer = buf;
-	cb.m_callback = (tpool::callback_func)io_callback;
-	cb.m_env = 0;
-	cb.m_fh = file.m_file;
-	cb.m_len = (int)n;
-	cb.m_offset = offset;
-	cb.m_opcode = type.is_read() ? tpool::AIO_PREAD : tpool::AIO_PWRITE;
-	memcpy(cb.m_userdata, &userdata, sizeof(userdata));
+	tpool::aiocb *cb = type.is_read() ? read_cache->get() : write_cache->get();
+	cb->m_buffer = buf;
+	cb->m_callback = (tpool::callback_func)io_callback;
+	cb->m_env = 0;
+	cb->m_fh = file.m_file;
+	cb->m_len = (int)n;
+	cb->m_offset = offset;
+	cb->m_opcode = type.is_read() ? tpool::AIO_PREAD : tpool::AIO_PWRITE;
+	memcpy(cb->m_userdata, &userdata, sizeof(userdata));
 
 	tpool::thread_pool *tp;
 
-	if (cb.m_opcode == tpool::AIO_PWRITE) {
+	if (cb->m_opcode == tpool::AIO_PWRITE) {
 		pending_aio_writes++;
 		tp= srv_thread_pool;
 	} else {
@@ -4144,10 +4161,10 @@ os_aio_func(
 		tp= read_pool;
 	}
 
-	if (!tp->submit_io(&cb))
+	if (!tp->submit_io(cb))
 		return DB_SUCCESS;
-	
-	if(cb.m_opcode == tpool::AIO_PWRITE)
+
+	if(cb->m_opcode == tpool::AIO_PWRITE)
 		pending_aio_writes--;
 
 	os_file_handle_error(name, type.is_read() ? "aio read" : "aio write");
