@@ -19,6 +19,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111 - 1301 USA*/
 #include <mutex>
 #include <condition_variable>
 #include <assert.h>
+#include <algorithm>
 
 namespace tpool
 {
@@ -92,6 +93,7 @@ public:
 */
 template <typename T> class circular_queue
 {
+
 public:
   circular_queue(size_t N = 16)
     : m_capacity(N + 1), m_buffer(m_capacity), m_head(), m_tail()
@@ -145,11 +147,53 @@ public:
     return m_capacity - m_head - 1 + m_tail;
   }
 
+  /*Iterator over elements in queue.*/
+  class iterator
+  {
+    size_t m_pos;
+    circular_queue<T>* m_queue;
+  public:
+    explicit iterator(size_t pos , circular_queue<T>* q) : m_pos(pos), m_queue(q) {}
+    iterator& operator++()
+    {
+      m_pos = (m_pos + 1) % m_queue->m_capacity;
+      return *this;
+    }
+    iterator operator++(int)
+    {
+      iterator retval = *this;
+      ++(*this); 
+      return retval;
+    }
+    bool operator==(iterator other) const 
+    {
+      return m_pos == other.m_pos;
+    }
+    bool operator!=(iterator other) const
+    {
+      return !(*this == other);
+    }
+    T& operator*() const
+    {
+      return m_queue->m_buffer[m_pos];
+    }
+  };
+
+  iterator begin()
+  {
+    return iterator(m_tail, this);
+  }
+  iterator end()
+  {
+    return iterator(m_head, this);
+  }
 private:
   size_t m_capacity;
   std::vector<T> m_buffer;
   size_t m_head;
   size_t m_tail;
+
+
 };
 
 /* Doubly linked list. Intrusive,

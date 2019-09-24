@@ -99,7 +99,7 @@ struct aiocb;
 struct aiocb
 #ifdef _WIN32
   :OVERLAPPED
-#elif defined HAVE_LINUX_NATIVE_AIO
+#elif defined LINUX_NATIVE_AIO
   :iocb
 #endif
 {
