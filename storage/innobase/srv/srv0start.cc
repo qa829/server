@@ -2286,8 +2286,7 @@ skip_monitors:
 #endif /* WITH_WSREP */
 
 		/* Start buffer pool dump/load task */
-		if (srv_buffer_pool_load_at_startup)
-			buf_load_at_startup();
+		buf_load_at_startup();
 
 #ifdef WITH_WSREP
 		} else {
