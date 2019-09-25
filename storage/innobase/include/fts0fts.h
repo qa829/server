@@ -664,14 +664,6 @@ void
 fts_optimize_add_table(
 	dict_table_t*	table);
 
-/******************************************************************//**
-Remove the table from the OPTIMIZER's list. We do wait for
-acknowledgement from the consumer of the message. */
-void
-fts_optimize_remove_table(
-/*======================*/
-	dict_table_t*	table);			/*!< in: table to remove */
-
 /** Shutdown fts optimize thread. */
 void
 fts_optimize_shutdown();

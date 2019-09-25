@@ -26,7 +26,6 @@ Full Text Search interface
 #include "row0mysql.h"
 #include "row0upd.h"
 #include "dict0types.h"
-#include "dict0stats_bg.h"
 #include "row0sel.h"
 #include "fts0fts.h"
 #include "fts0priv.h"
@@ -833,10 +832,6 @@ fts_drop_index(
 		doc_id_t	current_doc_id;
 		doc_id_t	first_doc_id;
 
-		/* If we are dropping the only FTS index of the table,
-		remove it from optimize thread */
-		fts_optimize_remove_table(table);
-
 		DICT_TF2_FLAG_UNSET(table, DICT_TF2_FTS);
 
 		/* If Doc ID column is not added internally by FTS index,
@@ -850,19 +845,9 @@ fts_drop_index(
 
 			err = fts_drop_index_tables(trx, index);
 
-			while (index->index_fts_syncing
-				&& !trx_is_interrupted(trx)) {
-				DICT_BG_YIELD(trx);
-			}
-
 			fts_free(table);
 
 			return(err);
-		}
-
-		while (index->index_fts_syncing
-		       && !trx_is_interrupted(trx)) {
-			DICT_BG_YIELD(trx);
 		}
 
 		current_doc_id = table->fts->cache->next_doc_id;
@@ -881,16 +866,13 @@ fts_drop_index(
 		index_cache = fts_find_index_cache(cache, index);
 
 		if (index_cache != NULL) {
-			while (index->index_fts_syncing
-			       && !trx_is_interrupted(trx)) {
-				DICT_BG_YIELD(trx);
-			}
 			if (index_cache->words) {
 				fts_words_free(index_cache->words);
 				rbt_free(index_cache->words);
 			}
 
-			ib_vector_remove(cache->indexes, *(void**) index_cache);
+			ib_vector_remove(
+				cache->indexes, *(void**) index_cache);
 		}
 
 		if (cache->get_docs) {
@@ -4312,14 +4294,9 @@ begin_sync:
 		index_cache = static_cast<fts_index_cache_t*>(
 			ib_vector_get(cache->indexes, i));
 
-		if (index_cache->index->to_be_dropped
-		   || index_cache->index->table->to_be_dropped) {
+		if (index_cache->index->to_be_dropped) {
 			continue;
 		}
-
-		DBUG_EXECUTE_IF("fts_instrument_sync_before_syncing",
-				os_thread_sleep(300000););
-		index_cache->index->index_fts_syncing = true;
 
 		error = fts_sync_index(sync, index_cache);
 
@@ -4358,14 +4335,6 @@ end_sync:
 	}
 
 	rw_lock_x_lock(&cache->lock);
-	/* Clear fts syncing flags of any indexes in case sync is
-	interrupted */
-	for (i = 0; i < ib_vector_size(cache->indexes); ++i) {
-		static_cast<fts_index_cache_t*>(
-			ib_vector_get(cache->indexes, i))
-			->index->index_fts_syncing = false;
-	}
-
 	sync->interrupted = false;
 	sync->in_progress = false;
 	os_event_set(sync->event);

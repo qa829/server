@@ -3088,7 +3088,6 @@ func_exit:
 			/* the table->fts could be created in dict_load_column
 			when a user defined FTS_DOC_ID is present, but no
 			FTS */
-			fts_optimize_remove_table(table);
 			fts_free(table);
 		} else {
 			fts_optimize_add_table(table);

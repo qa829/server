@@ -10733,18 +10733,6 @@ ha_innobase::commit_inplace_alter_table(
 
 		DBUG_ASSERT(new_clustered == ctx->need_rebuild());
 
-		if (new_clustered) {
-			if (ctx->old_table->fts) {
-				ut_ad(!ctx->old_table->fts->add_wq);
-				fts_optimize_remove_table(ctx->old_table);
-			}
-		}
-
-		if (ctx->new_table->fts) {
-			ut_ad(!ctx->new_table->fts->add_wq);
-			fts_optimize_remove_table(ctx->new_table);
-		}
-
 		/* Apply the online log of the table before acquiring
 		data dictionary latches. Here alter thread already acquired
 		MDL_EXCLUSIVE on the table. So there can't be anymore DDLs, DMLs
@@ -10795,44 +10783,6 @@ ha_innobase::commit_inplace_alter_table(
 
 		if (!retry) {
 			break;
-		}
-
-		DICT_BG_YIELD(trx);
-	}
-
-	/* Make a concurrent Drop fts Index to wait until sync of that
-	fts index is happening in the background */
-	for (int retry_count = 0;;) {
-		bool    retry = false;
-
-		for (inplace_alter_handler_ctx** pctx = ctx_array;
-		    *pctx; pctx++) {
-			ha_innobase_inplace_ctx*        ctx
-				= static_cast<ha_innobase_inplace_ctx*>(*pctx);
-			DBUG_ASSERT(new_clustered == ctx->need_rebuild());
-
-			if (dict_fts_index_syncing(ctx->old_table)) {
-				retry = true;
-				break;
-			}
-
-			if (new_clustered && dict_fts_index_syncing(ctx->new_table)) {
-				retry = true;
-				break;
-			}
-		}
-
-		if (!retry) {
-			 break;
-		}
-
-		/* Print a message if waiting for a long time. */
-		if (retry_count < 100) {
-			retry_count++;
-		} else {
-			ib::info() << "Drop index waiting for background sync"
-				" to finish";
-			retry_count = 0;
 		}
 
 		DICT_BG_YIELD(trx);
@@ -11227,13 +11177,8 @@ foreign_fail:
 
 		ut_d(dict_table_check_for_dup_indexes(
 			     ctx->new_table, CHECK_ABORTED_OK));
+		ut_a(fts_check_cached_index(ctx->new_table));
 
-#ifdef UNIV_DEBUG
-		if (!(ctx->new_table->fts != NULL
-			&& ctx->new_table->fts->cache->sync->in_progress)) {
-			ut_a(fts_check_cached_index(ctx->new_table));
-		}
-#endif
 		if (new_clustered) {
 			/* Since the table has been rebuilt, we remove
 			all persistent statistics corresponding to the
