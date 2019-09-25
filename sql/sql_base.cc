@@ -1033,6 +1033,7 @@ void close_thread_table(THD *thd, TABLE **table_ptr)
   DBUG_ASSERT(!table->file->keyread_enabled());
   DBUG_ASSERT(!table->file || table->file->inited == handler::NONE);
 
+#if 0
   /*
     The metadata lock must be released after giving back
     the table to the table cache.
@@ -1041,6 +1042,7 @@ void close_thread_table(THD *thd, TABLE **table_ptr)
                                              table->s->db.str,
                                              table->s->table_name.str,
                                              MDL_SHARED));
+#endif
   table->mdl_ticket= NULL;
 
   if (table->file)
