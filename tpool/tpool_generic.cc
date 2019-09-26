@@ -273,11 +273,11 @@ public:
     {
       auto timer = (timer_generic*)arg;
       timer->m_callback(timer->m_data);
-      if (timer->m_period)
+      if (timer->m_pool && timer->m_period)
       {
+        assert(!timer->period);
         // re-execute after given period.
-	assert(timer->m_pool);
-        timer->set_time(timer->m_period, 0);
+        thr_timer_settime(timer, 1000ULL * timer->m_period);
       }
     }
     static void submit_task(void* arg)

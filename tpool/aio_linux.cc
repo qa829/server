@@ -45,12 +45,6 @@ class aio_linux : public aio
   bool m_in_shutdown;
   std::thread m_getevent_thread;
 
-  static void io_completion_task(void* param)
-  {
-    aiocb* cb = (aiocb*)param;
-    cb->execute_callback();
-  }
-
   static void getevent_thread_routine(aio_linux* aio)
   {
     for (;;)
@@ -77,7 +71,7 @@ class aio_linux : public aio
           iocb->m_err = 0;
         }
 
-        iocb->m_internal_task.m_func = io_completion_task;
+        iocb->m_internal_task.m_func = iocb->m_callback;
         iocb->m_internal_task.m_arg = iocb;
         iocb->m_internal_task.m_env = iocb->m_env;
         aio->m_pool->submit_task(&iocb->m_internal_task);

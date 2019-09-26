@@ -10,7 +10,7 @@ namespace tpool
   class rate_limiter : public execution_environment
   {
   private:
-    circular_queue<tpool::task *> m_queue;
+    circular_queue<task *> m_queue;
     std::mutex m_mtx;
     std::condition_variable m_cv;
     unsigned int m_tasks_running;

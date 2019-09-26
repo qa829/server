@@ -84,7 +84,7 @@ public:
            aiocb->m_err = GetLastError();
         }
       }
-      aiocb->m_internal_task.m_func = io_completion_task;
+      aiocb->m_internal_task.m_func = aiocb->m_callback;
       aiocb->m_internal_task.m_arg = aiocb;
       aiocb->m_internal_task.m_env = aiocb->m_env;
       m_pool->submit_task(&aiocb->m_internal_task);
