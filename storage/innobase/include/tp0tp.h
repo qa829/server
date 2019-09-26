@@ -8,7 +8,7 @@ extern tpool::thread_pool *srv_thread_pool;
 extern std::unique_ptr<tpool::timer> srv_master_timer;
 extern std::unique_ptr<tpool::timer> srv_error_monitor_timer;
 extern std::unique_ptr<tpool::timer> srv_monitor_timer;
-extern std::unique_ptr<tpool::execution_environment> srv_timers_env;
+extern std::unique_ptr<tpool::execution_environment> srv_background_env;
 
 #define SRV_MONITOR_TIMER_PERIOD 5000
 static inline void srv_monitor_timer_schedule_now()
@@ -20,7 +20,7 @@ static inline void srv_start_periodic_timer(
 	void (*func)(void*),
 	int period)
 {
-  timer.reset(srv_thread_pool->create_timer({ func, nullptr, srv_timers_env.get() }));
+  timer.reset(srv_thread_pool->create_timer(func, nullptr, srv_background_env.get()));
 	timer->set_time(0, period);
 }
 
@@ -52,7 +52,9 @@ struct waitable_task
     CANCELED
   } m_state;
   tpool::task m_task;
-  waitable_task(const tpool::task &t):m_mtx(), m_cv(), m_state(NONE),m_task(t)
+  tpool::callback_func m_callback;
+  waitable_task(const tpool::task& t) :m_mtx(), m_cv(), m_state(NONE), 
+    m_task(waitable_task::execute, this, t.m_env), m_callback(t.m_func)
   {
   }
   void run()
@@ -62,7 +64,7 @@ struct waitable_task
     {
       m_state = RUNNING;
       lk.unlock();
-      m_task.execute();
+      m_callback(m_task.m_arg);
       lk.lock();
     }
     m_state = NONE;
@@ -77,7 +79,7 @@ struct waitable_task
     std::unique_lock<std::mutex> lk(m_mtx);
     if (m_state == NONE)
     {
-      pool->submit_task({ execute,this });
+      pool->submit_task(&m_task);
       m_state = PENDING;
       return true;
     }

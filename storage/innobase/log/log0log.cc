@@ -1593,7 +1593,7 @@ logs_empty_and_mark_files_at_shutdown(void)
 		do_srv_shutdown = srv_fast_shutdown < 2;
 		srv_master_timer.reset();
 	}
-	srv_timers_env->wait(true);
+	srv_background_env->wait(true);
 
 	if (do_srv_shutdown) {
 		srv_shutdown(srv_fast_shutdown == 0);

@@ -15,6 +15,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111 - 1301 USA*/
 
 #pragma once
 #include <memory> /* unique_ptr */
+#include <condition_variable>
+#include <atomic>
 #ifdef LINUX_NATIVE_AIO
 #include <libaio.h>
 #endif
@@ -54,7 +56,10 @@ or waiting for finished callbacks. */
 class execution_environment
 {
 public:
-  virtual void execute(task& t) = 0;
+  virtual void submit(task* t) = 0;
+  virtual void cancel(task* t) = 0;
+  virtual void execute(task* t) = 0;
+  virtual void wait(task* t, bool cancel_pending) = 0;
   virtual void wait(bool cancel_pending) = 0;
   virtual void set_max_concurrency(unsigned int) = 0;
   virtual ~execution_environment() {};
@@ -62,25 +67,32 @@ public:
 
 /* Task executor limiting concurrency.*/
 extern execution_environment* create_execution_environment();
-  /**
+/**
  Task, a void function with void *argument.
 */
+class task_wait_handle
+{
+
+};
 class task
 {
-private:
+public:
   callback_func m_func;
   void *m_arg;
   execution_environment* m_env;
-public:
+  std::condition_variable m_cond;
+  int m_ref_count;
+  int m_waiter_count;
+
   task() {};
   task(callback_func func, void* arg, execution_environment* env = nullptr) :
-    m_func(func), m_arg(arg), m_env(env) {};
+    m_func(func), m_arg(arg), m_env(env), m_cond(), m_ref_count(),m_waiter_count(){};
   void* get_arg() { return m_arg; }
   callback_func get_func() { return m_func; }
   inline void execute()
   {
     if (m_env)
-      m_env->execute(*this);
+      m_env->execute(this);
     else
       m_func(m_arg);
   }
@@ -114,8 +126,11 @@ struct aiocb
   int m_ret_len;
   int m_err;
   void *m_internal;
+  task m_internal_task;
   char m_userdata[MAX_AIO_USERDATA_LEN];
 
+  aiocb() : m_internal_task(nullptr, nullptr)
+  {}
   void execute_callback()
   {
     task t(m_callback, this);
@@ -172,8 +187,8 @@ public:
   thread_pool() : m_aio(), m_worker_init_callback(), m_worker_destroy_callback()
   {
   }
-  virtual void submit_task(const task &t)= 0;
-  virtual timer* create_timer(const task &t) = 0;
+  virtual void submit_task(task *t)= 0;
+  virtual timer* create_timer(callback_func func, void *data, execution_environment *env) = 0;
   void set_thread_callbacks(void (*init)(), void (*destroy)())
   {
     m_worker_init_callback= init;

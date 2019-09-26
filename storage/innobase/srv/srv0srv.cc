@@ -609,7 +609,7 @@ bool purge_sys_t::running()
 /** threadpool timer for srv_error_monitor_task(). */
 std::unique_ptr<tpool::timer> srv_error_monitor_timer;
 std::unique_ptr<tpool::timer> srv_monitor_timer;
-std::unique_ptr<tpool::execution_environment> srv_timers_env(tpool::create_execution_environment());
+std::unique_ptr<tpool::execution_environment> srv_background_env(tpool::create_execution_environment());
 
 /** Event to signal the buffer pool resize thread */
 os_event_t	srv_buf_resize_event;
@@ -1003,7 +1003,7 @@ void srv_thread_pool_init()
 {
 	DBUG_ASSERT(!srv_thread_pool);
 
-#if defined (_WIN32)
+#if defined (_WIN32) && 0
 	srv_thread_pool = tpool::create_thread_pool_win();
 #else
 	srv_thread_pool = tpool::create_thread_pool_generic();

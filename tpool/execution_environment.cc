@@ -3,12 +3,14 @@
 #include <mutex>
 #include <condition_variable>
 #include <tpool_structs.h>
+
 namespace tpool
 {
+
   class rate_limiter : public execution_environment
   {
   private:
-    circular_queue<tpool::task> m_queue;
+    circular_queue<tpool::task *> m_queue;
     std::mutex m_mtx;
     std::condition_variable m_cv;
     unsigned int m_tasks_running;
@@ -25,7 +27,7 @@ namespace tpool
       m_is_canceled(),
       m_waiter_count()
     {};
-    void execute(task& t) override
+    void execute(task* t) override
     {
       std::unique_lock<std::mutex> lk(m_mtx);
       if (m_is_canceled)
@@ -40,8 +42,11 @@ namespace tpool
       for(;;)
       {
         lk.unlock();
-        t.get_func()(t.get_arg());
+        if (t)
+          t->m_func(t->m_arg);
         lk.lock();
+        if (t && --t->m_ref_count == 0 && t->m_waiter_count)
+          t->m_cond.notify_all();
         if (m_is_canceled || m_queue.empty())
           break;
         t = m_queue.front();
@@ -68,6 +73,35 @@ namespace tpool
     {
       std::unique_lock<std::mutex> lk(m_mtx);
       m_max_concurrent_tasks = max_concurrent_tasks;
+    }
+
+    // Inherited via execution_environment
+    virtual void submit(task* t) override
+    {
+      std::unique_lock<std::mutex> lk(m_mtx);
+      t->m_ref_count++;
+    }
+    virtual void cancel(task* t) override
+    {
+      std::unique_lock<std::mutex> lk(m_mtx);
+      t->m_ref_count--;
+    }
+  
+    virtual void wait(task* t, bool cancel_pending) override
+    {
+      std::unique_lock<std::mutex> lk(m_mtx);
+      for (auto it = m_queue.begin(); it != m_queue.end(); it++)
+      {
+        if (*it == t)
+        {
+          (*it)->m_ref_count--;
+          (*it) = nullptr;
+        }
+      }
+      t->m_waiter_count++;
+      while (t->m_ref_count)
+        t->m_cond.wait(lk);
+      t->m_waiter_count--;
     }
   };
 

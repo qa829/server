@@ -45,7 +45,7 @@ class aio_linux : public aio
   bool m_in_shutdown;
   std::thread m_getevent_thread;
 
-  static void execute_io_completion(void* param)
+  static void io_completion_task(void* param)
   {
     aiocb* cb = (aiocb*)param;
     cb->execute_callback();
@@ -77,7 +77,10 @@ class aio_linux : public aio
           iocb->m_err = 0;
         }
 
-        aio->m_pool->submit_task({ execute_io_completion, iocb});
+        iocb->m_internal_task.m_func = io_completion_task;
+        iocb->m_internal_task.m_arg = iocb;
+        iocb->m_internal_task.m_env = iocb->m_env;
+        aio->m_pool->submit_task(&iocb->m_internal_task);
         continue;
       }
       switch (ret)

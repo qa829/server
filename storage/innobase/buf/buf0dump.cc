@@ -804,12 +804,8 @@ buf_load_abort()
 /*****************************************************************//**
 This is the main task for buffer pool dump/load. when scheduled
 either performs a dump or load, depending on server state, state of the variables etc- */
-static bool buf_dump_load_enabled;
 static void buf_dump_load_func(void *)
 {
-	if (!buf_dump_load_enabled)
-		return;
-
 	ut_ad(!srv_read_only_mode);
 	static bool first_time = true;
 	if (first_time && srv_buffer_pool_load_at_startup) {
@@ -855,25 +851,39 @@ static void buf_dump_load_func(void *)
 }
 
 
-static waitable_task buf_dump_load_task({buf_dump_load_func, nullptr });
+/* Single threaded execution env.*/
+static std::unique_ptr<tpool::execution_environment> tpool_env;
+
+static tpool::task buf_dump_load_task(buf_dump_load_func, nullptr);
 
 /** Start async buffer pool load, if srv_buffer_pool_load_at_startup was set.*/
 void buf_load_at_startup()
 {
-	buf_dump_load_enabled = true;
+  ut_a(!tpool_env);
+  tpool_env.reset(tpool::create_execution_environment());
+  tpool_env->set_max_concurrency(1);
+
+  buf_dump_load_task.m_env = tpool_env.get();
 	if (srv_buffer_pool_load_at_startup) {
-		buf_dump_load_task.submit(srv_thread_pool);
+    buf_do_load_dump();
 	}
 }
 
 static void buf_do_load_dump()
 {
-	buf_dump_load_task.submit(srv_thread_pool);
+  if (!tpool_env.get())
+    return;
+  if (buf_dump_load_task.m_ref_count)
+    return;
+  srv_thread_pool->submit_task(&buf_dump_load_task);
 }
 
 /** Wait for currently running load/dumps to finish*/
 void buf_load_dump_end()
 {
-	ut_ad(SHUTTING_DOWN());
-	buf_dump_load_task.wait(false);
+  ut_ad(SHUTTING_DOWN());
+  if (!tpool_env)
+    return;
+  tpool_env->wait(&buf_dump_load_task, false);
+  tpool_env.reset();
 }

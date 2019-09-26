@@ -88,8 +88,8 @@ class thread_pool_win : public thread_pool
     }
 
   public:
-    native_timer(thread_pool_win &pool, const task &t) : 
-      m_task(t),m_pool(pool),m_callback_timer()
+    native_timer(thread_pool_win &pool, callback_func func, void *data , execution_environment *env) : 
+      m_task(func, data, env),m_pool(pool),m_callback_timer()
     {
       m_ptp_timer= CreateThreadpoolTimer(timer_callback, this, &pool.m_env);
     }
@@ -207,7 +207,7 @@ class thread_pool_win : public thread_pool
   struct task_cache_entry
   {
     thread_pool_win *m_pool;
-    task m_task;
+    task* m_task;
   };
   cache<task_cache_entry> m_task_cache;
   std::atomic<int> m_thread_count;
@@ -247,13 +247,15 @@ public:
 
     entry->m_pool->m_task_cache.put(entry);
 
-    task.execute();
+    task->execute();
   }
-  virtual void submit_task(const task &task) override
+  virtual void submit_task(task *task) override
   {
     auto entry= m_task_cache.get();
     entry->m_pool= this;
     entry->m_task= task;
+    if (task->m_env)
+      task->m_env->submit(task);
     if (!TrySubmitThreadpoolCallback(task_callback, entry, &m_env))
       abort();
   }
@@ -263,9 +265,9 @@ public:
     return new native_aio(*this, max_io);
   }
 
-  timer* create_timer(const task& t) override
+  timer* create_timer(callback_func func, void* data, execution_environment* env)  override
   {
-    return new native_timer(*this, t);
+    return new native_timer(*this, func, data, env);
   }
 };
 

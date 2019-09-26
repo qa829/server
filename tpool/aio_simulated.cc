@@ -161,9 +161,13 @@ public:
 
   virtual int submit_io(aiocb *aiocb) override
   {
-    m_pool->submit_task({ simulated_aio_callback, (void*)aiocb, aiocb->m_env });
+    aiocb->m_internal_task.m_func = simulated_aio_callback;
+    aiocb->m_internal_task.m_arg = aiocb;
+    aiocb->m_internal_task.m_env = aiocb->m_env;
+    m_pool->submit_task(&aiocb->m_internal_task);
     return 0;
   }
+
   virtual int bind(native_file_handle &fd) override { return 0; }
   virtual int unbind(const native_file_handle &fd) override { return 0; }
 };
