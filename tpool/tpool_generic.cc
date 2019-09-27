@@ -273,7 +273,13 @@ public:
     {
       auto timer = (timer_generic*)arg;
       timer->m_callback(timer->m_data);
-      if (timer->m_pool && timer->m_period)
+
+      if ((timer->m_pool == nullptr) != (timer->m_period == 0))
+      {
+        fprintf(stderr, "timer->m_pool=%p, timer->m_period=%d\n", timer->m_pool, timer->m_period);
+        abort();
+      }
+      if (timer->m_pool)
       {
         assert(!timer->period);
         // re-execute after given period.

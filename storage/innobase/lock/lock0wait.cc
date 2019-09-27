@@ -236,6 +236,7 @@ lock_wait_suspend_thread(
 	ibool		was_declared_inside_innodb;
 	ulong		lock_wait_timeout;
 
+  ut_a(lock_sys.timeout_timer.get());
 	trx = thr_get_trx(thr);
 
 	if (trx->mysql_thd != 0) {
