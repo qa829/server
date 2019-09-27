@@ -276,7 +276,7 @@ public:
 
       if ((timer->m_pool == nullptr) != (timer->m_period == 0))
       {
-        fprintf(stderr, __FUNCTION__ ": timer->m_pool=%p, timer->m_period=%d\n", timer->m_pool, timer->m_period);
+        fprintf(stderr, __func__ ": timer->m_pool=%p, timer->m_period=%d\n", timer->m_pool, timer->m_period);
         abort();
       }
       if (timer->m_pool)
@@ -316,7 +316,7 @@ public:
         m_period = period_ms;
       if ((m_pool == nullptr) != (m_period == 0))
       {
-        fprintf(stderr, __FUNCTION__ ": timer->m_pool=%p, timer->m_period=%d\n", m_pool, m_period);
+        fprintf(stderr, __func__ ": timer->m_pool=%p, timer->m_period=%d\n", m_pool, m_period);
         abort();
       }
       thr_timer_settime(this, 1000ULL * initial_delay_ms);
