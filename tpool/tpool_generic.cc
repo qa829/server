@@ -459,6 +459,7 @@ void thread_pool_generic::worker_end(worker_data* thread_data)
 {
   std::lock_guard<std::mutex> lk(m_mtx);
   m_active_threads.erase(thread_data);
+  m_thread_data_cache.put(thread_data);
 
   if (!thread_count() && m_in_shutdown)
   {
@@ -484,7 +485,6 @@ void thread_pool_generic::worker_main(worker_data *thread_var)
     m_worker_destroy_callback();
 
   worker_end(thread_var);
-  m_thread_data_cache.put(thread_var);
 }
 
 /*
