@@ -276,7 +276,7 @@ public:
 
       if ((timer->m_pool == nullptr) != (timer->m_period == 0))
       {
-        fprintf(stderr, "timer->m_pool=%p, timer->m_period=%d\n", timer->m_pool, timer->m_period);
+        fprintf(stderr, __FUNCTION__ ": timer->m_pool=%p, timer->m_period=%d\n", timer->m_pool, timer->m_period);
         abort();
       }
       if (timer->m_pool)
@@ -310,11 +310,16 @@ public:
 
     void set_time(int initial_delay_ms, int period_ms) override
     {
-      thr_timer_settime(this, 1000ULL * initial_delay_ms);
-      if(!m_pool)
+      if (!m_pool)
         thr_timer_set_period(this, 1000ULL * period_ms);
       else
         m_period = period_ms;
+      if ((m_pool == nullptr) != (m_period == 0))
+      {
+        fprintf(stderr, __FUNCTION__ ": timer->m_pool=%p, timer->m_period=%d\n", m_pool, m_period);
+        abort();
+      }
+      thr_timer_settime(this, 1000ULL * initial_delay_ms);
     }
 
     void disarm() override
