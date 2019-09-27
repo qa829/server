@@ -103,6 +103,7 @@ Street, Fifth Floor, Boston, MA 02110-1335 USA
 #include <crc_glue.h>
 #include <log.h>
 #include <tp0tp.h>
+#include <thr_timer.h>
 
 int sys_var_init();
 
@@ -6134,9 +6135,12 @@ int main(int argc, char **argv)
 		DBUG_SET(dbug_option);
 	}
 #endif
+	/* Main functions for library */
+	init_thr_timer(5);
 
 	int status = main_low(server_defaults);
 
+	end_thr_timer();
 	backup_cleanup();
 
 	if (innobackupex_mode) {
