@@ -310,6 +310,7 @@ public:
 
     void set_time(int initial_delay_ms, int period_ms) override
     {
+      thr_timer_end(this);
       if (!m_pool)
         thr_timer_set_period(this, 1000ULL * period_ms);
       else
