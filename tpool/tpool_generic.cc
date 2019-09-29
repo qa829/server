@@ -325,6 +325,8 @@ public:
 
     void disarm() override
     {
+      if (m_pool)
+        m_pool->wait(&m_task, true);
       thr_timer_end(this);
     }
     virtual ~timer_generic()
@@ -348,7 +350,7 @@ void thread_pool_generic::wait(task* t, bool remove_pending)
 {
   if (!t->m_env)
     abort();
-
+  std::unique_lock <std::mutex> lk(m_mtx);
   if (remove_pending)
   {
     for (auto it = m_task_queue.begin(); it != m_task_queue.end(); it++)
