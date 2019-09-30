@@ -268,23 +268,31 @@ public:
     callback_func m_callback;
     void* m_data;
     int m_period;
+    std::mutex m_mtx;
+    bool m_on;
 
+    void run()
+    {
+      m_callback(m_data);
+
+      if ((m_pool == nullptr) != (m_period == 0))
+      {
+        fprintf(stderr, __func__ ": timer->m_pool=%p, timer->m_period=%d\n", m_pool, m_period);
+        abort();
+      }
+      if (m_pool)
+      {
+        assert(!period);
+        // re-execute after given period.
+        std::unique_lock<std::mutex> lk(m_mtx);
+        if (m_on)
+          thr_timer_settime(this, 1000ULL * m_period);
+      }
+    }
     static void execute(void* arg)
     {
       auto timer = (timer_generic*)arg;
-      timer->m_callback(timer->m_data);
-
-      if ((timer->m_pool == nullptr) != (timer->m_period == 0))
-      {
-        fprintf(stderr, __func__ ": timer->m_pool=%p, timer->m_period=%d\n", timer->m_pool, timer->m_period);
-        abort();
-      }
-      if (timer->m_pool)
-      {
-        assert(!timer->period);
-        // re-execute after given period.
-        thr_timer_settime(timer, 1000ULL * timer->m_period);
-      }
+      timer->run();
     }
     static void submit_task(void* arg)
     {
@@ -294,7 +302,10 @@ public:
 
   public:
     timer_generic(callback_func func, void* data, execution_environment *env, thread_pool_generic * pool):
-      m_pool(pool), m_task(timer_generic::execute,this, env),m_callback(func),m_data(data),m_period(0)
+      m_pool(pool),
+      m_task(timer_generic::execute,this, env),
+      m_callback(func),m_data(data),m_period(0),m_mtx(),
+      m_on(true)
     {
       if (pool)
       {
@@ -310,6 +321,9 @@ public:
 
     void set_time(int initial_delay_ms, int period_ms) override
     {
+      std::unique_lock<std::mutex> lk(m_mtx);
+      if (!m_on)
+        return;
       thr_timer_end(this);
       if (!m_pool)
         thr_timer_set_period(this, 1000ULL * period_ms);
@@ -325,6 +339,8 @@ public:
 
     void disarm() override
     {
+      std::unique_lock<std::mutex> lk(m_mtx);
+      m_on = false;
       if (m_pool)
         m_pool->wait(&m_task, true);
       thr_timer_end(this);
