@@ -348,6 +348,8 @@ public:
         fprintf(stderr, __func__ ": timer->m_pool=%p, timer->m_period=%d\n", m_pool, m_period);
         abort();
       }
+      if (!initial_delay_ms && m_queued)
+        return;
       thr_timer_settime(this, 1000ULL * initial_delay_ms);
     }
 
@@ -355,9 +357,11 @@ public:
     {
       std::unique_lock<std::mutex> lk(m_mtx);
       m_on = false;
+      thr_timer_end(this);
+      lk.unlock();
+
       if (m_pool)
         m_pool->wait(&m_task, true);
-      thr_timer_end(this);
     }
     virtual ~timer_generic()
     {
@@ -392,6 +396,7 @@ void thread_pool_generic::wait(task* t, bool remove_pending)
       }
     }
   }
+  lk.unlock();
   t->m_env->wait(t, remove_pending);
 }
 /**
