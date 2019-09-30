@@ -270,6 +270,7 @@ public:
     int m_period;
     std::mutex m_mtx;
     bool m_on;
+    bool m_queued;
 
     void run()
     {
@@ -287,20 +288,30 @@ public:
         std::unique_lock<std::mutex> lk(m_mtx);
         if (m_on)
         {
+          m_queued = false;
           thr_timer_end(this);
           thr_timer_settime(this, 1000ULL * m_period);
         }
       }
     }
+
     static void execute(void* arg)
     {
       auto timer = (timer_generic*)arg;
       timer->run();
     }
+    void submit()
+    {
+      std::unique_lock<std::mutex> lk(m_mtx);
+      if (!m_on || m_queued)
+        return;
+      m_pool->submit_task(&m_task);
+      m_queued = true;
+    }
     static void submit_task(void* arg)
     {
       timer_generic* timer = (timer_generic*)arg;
-      timer->m_pool->submit_task(&timer->m_task);
+      timer->submit();
     }
 
   public:
@@ -308,7 +319,7 @@ public:
       m_pool(pool),
       m_task(timer_generic::execute,this, env),
       m_callback(func),m_data(data),m_period(0),m_mtx(),
-      m_on(true)
+      m_on(true),m_queued()
     {
       if (pool)
       {
