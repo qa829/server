@@ -286,7 +286,10 @@ public:
         // re-execute after given period.
         std::unique_lock<std::mutex> lk(m_mtx);
         if (m_on)
+        {
+          thr_timer_end(this);
           thr_timer_settime(this, 1000ULL * m_period);
+        }
       }
     }
     static void execute(void* arg)
