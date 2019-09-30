@@ -4329,6 +4329,14 @@ static int replace_user_table(THD *thd, const User_table &user_table,
   if (table->file->ha_index_read_idx_map(table->record[0], 0, user_key,
                                          HA_WHOLE_KEY, HA_READ_KEY_EXACT))
   {
+    /* Early return ALTER USER if there is no match in the user table,
+       if_exists is handled in mysql_alter_user */
+    if (lex->sql_command == SQLCOM_ALTER_USER)
+    {
+      my_error(ER_PASSWORD_NO_MATCH, MYF(0));
+      goto end;
+    }
+
     if (revoke_grant)
     {
       my_error(ER_NONEXISTING_GRANT, MYF(0), combo->user.str, combo->host.str);
@@ -10901,7 +10909,6 @@ int mysql_alter_user(THD* thd, List<LEX_USER> &users_list)
     if (!lex_user || replace_user_table(thd, tables.user_table(), lex_user, 0,
                                         false, false, true))
     {
-      thd->clear_error();
       append_user(thd, &wrong_users, tmp_lex_user);
       result= TRUE;
       continue;
@@ -10918,6 +10925,7 @@ int mysql_alter_user(THD* thd, List<LEX_USER> &users_list)
     /* 'if exists' flag leads to warnings instead of errors. */
     if (thd->lex->create_info.if_exists())
     {
+      thd->clear_error();
       push_warning_printf(thd, Sql_condition::WARN_LEVEL_NOTE,
                           ER_CANNOT_USER,
                           ER_THD(thd, ER_CANNOT_USER),

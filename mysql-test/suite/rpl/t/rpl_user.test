@@ -46,9 +46,9 @@ select Host,User from mysql.user where Host='fakehost';
 #
 connection master;
 alter user 'foofoo'@'fakehost' identified by 'foo';
---error ER_CANNOT_USER
+--error ER_PASSWORD_NO_MATCH
 alter user 'non_exist_user1'@'fakehost' identified by 'foo', 'barbar'@'fakehost' identified by 'bar';
---error ER_CANNOT_USER
+--error ER_PASSWORD_NO_MATCH
 alter user 'non_exist_user1'@'fakehost' identified by 'foo', 'non_exist_user2'@'fakehost' identified by 'bar';
 sync_slave_with_master;
 

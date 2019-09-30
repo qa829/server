@@ -41,7 +41,7 @@ alter user user1@localhost account unlock;
 --echo # IF EXISTS is used
 --echo #
 
---error ER_CANNOT_USER
+--error ER_PASSWORD_NO_MATCH
 alter user inexistentUser@localhost account lock;
 
 alter if exists user inexistentUser@localhost account lock;

@@ -40,7 +40,7 @@ connection default;
 SET GLOBAL read_only = @start_read_only;
 
 --echo # Test inexistant user.
---error ER_CANNOT_USER
+--error ER_PASSWORD_NO_MATCH
 alter user boo;
 --echo #--warning ER_CANNOT_USER
 alter if exists user boo;
@@ -55,7 +55,7 @@ select * from mysql.user where user = 'foo';
 alter user foo identified by password '*88C89BE093D4ECF72D039F62EBB7477EA1FD4D63';
 select * from mysql.user where user = 'foo';
 
---error ER_CANNOT_USER
+--error ER_PLUGIN_IS_NOT_LOADED
 alter user foo identified with 'somecoolplugin';
 show warnings;
 
