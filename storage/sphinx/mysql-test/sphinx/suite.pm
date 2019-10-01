@@ -23,8 +23,6 @@ return "'indexer' binary not found" unless $exe_sphinx_indexer;
 my $exe_sphinx_searchd = &locate_sphinx_binary('searchd');
 return "'searchd' binary not found" unless $exe_sphinx_searchd;
 
-my $sphinx_config= "$::opt_vardir/my_sphinx.conf";
-
 # Check for Sphinx engine
 
 return "SphinxSE not found" unless $ENV{HA_SPHINX_SO} or $::mysqld_variables{'sphinx'} eq "ON";
@@ -102,6 +100,7 @@ sub wait_exp_backoff {
   my $start_wait= shift; # Seconds
   my $scale_factor= shift;
 
+  my $sphinx_config= "$::opt_vardir/my_sphinx.conf";
   $searchd_status= "$exe_sphinx_searchd --status" .
                    " --config $sphinx_config > /dev/null 2>&1";
 
@@ -146,7 +145,7 @@ sub servers {
   )
 }
 
-sub is_default { 0 }
+sub is_default { 1 }
 
 ############# return an object ######################
 bless { };
