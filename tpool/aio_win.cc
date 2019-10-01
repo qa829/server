@@ -86,7 +86,7 @@ public:
       }
       aiocb->m_internal_task.m_func = aiocb->m_callback;
       aiocb->m_internal_task.m_arg = aiocb;
-      aiocb->m_internal_task.m_env = aiocb->m_env;
+      aiocb->m_internal_task.m_group = aiocb->m_group;
       m_pool->submit_task(&aiocb->m_internal_task);
     }
   }
@@ -107,7 +107,6 @@ public:
   {
     memset(cb, 0, sizeof(OVERLAPPED));
     cb->m_internal = this;
-
     ULARGE_INTEGER uli;
     uli.QuadPart = cb->m_offset;
     cb->Offset = uli.LowPart;

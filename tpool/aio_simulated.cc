@@ -163,7 +163,7 @@ public:
   {
     aiocb->m_internal_task.m_func = simulated_aio_callback;
     aiocb->m_internal_task.m_arg = aiocb;
-    aiocb->m_internal_task.m_env = aiocb->m_env;
+    aiocb->m_internal_task.m_group = aiocb->m_group;
     m_pool->submit_task(&aiocb->m_internal_task);
     return 0;
   }

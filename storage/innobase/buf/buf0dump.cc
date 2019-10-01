@@ -851,39 +851,30 @@ static void buf_dump_load_func(void *)
 }
 
 
-/* Single threaded execution env.*/
-static std::unique_ptr<tpool::execution_environment> tpool_env;
-
-static tpool::task buf_dump_load_task(buf_dump_load_func, nullptr);
+/* Execute tak with max.concurrency */
+tpool::task_group tpool_group(1);
+static tpool::waitable_task buf_dump_load_task(buf_dump_load_func, &tpool_group);
+static bool load_dump_enabled;
 
 /** Start async buffer pool load, if srv_buffer_pool_load_at_startup was set.*/
 void buf_load_at_startup()
 {
-  ut_a(!tpool_env);
-  tpool_env.reset(tpool::create_execution_environment());
-  tpool_env->set_max_concurrency(1);
-
-  buf_dump_load_task.m_env = tpool_env.get();
+	load_dump_enabled = true;
 	if (srv_buffer_pool_load_at_startup) {
-    buf_do_load_dump();
+		buf_do_load_dump();
 	}
 }
 
 static void buf_do_load_dump()
 {
-  if (!tpool_env.get())
-    return;
-  if (buf_dump_load_task.m_ref_count)
-    return;
-  srv_thread_pool->submit_task(&buf_dump_load_task);
+	if (!load_dump_enabled || buf_dump_load_task.is_running())
+		return;
+	srv_thread_pool->submit_task(&buf_dump_load_task);
 }
 
 /** Wait for currently running load/dumps to finish*/
 void buf_load_dump_end()
 {
-  ut_ad(SHUTTING_DOWN());
-  if (!tpool_env)
-    return;
-  tpool_env->wait(&buf_dump_load_task, false);
-  tpool_env.reset();
+	ut_ad(SHUTTING_DOWN());
+	buf_dump_load_task.wait();
 }

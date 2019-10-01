@@ -80,11 +80,67 @@ Created 10/21/1995 Heikki Tuuri
 
 #include <tp0tp.h>
 
-static tpool::thread_pool* read_pool;
-tpool::cache<tpool::aiocb>* read_cache;
-tpool::cache<tpool::aiocb>* write_cache;
+/* Per-operation*/
+class io_env
+{
+private:
+	std::mutex m_mtx;
+	tpool::cache<tpool::aiocb> m_cache;
+	tpool::task_group m_group;
+	std::condition_variable m_cv;
+	int m_pending;
+	int m_waiters;
+public:
+	io_env(int max_submitted_io, int max_callback_concurrency) :
+		m_mtx(),
+		m_cache(max_submitted_io),
+		m_group(max_callback_concurrency),
+		m_pending(), m_waiters()
+	{
+	}
+	/* Get cached AIO control block */
+	tpool::aiocb* acquire()
+	{
+		std::lock_guard<std::mutex> lk(m_mtx);
+		m_pending++;
+		return m_cache.get();
+	}
+	/* Release AIO control block back to cache */
+	void release(tpool::aiocb* aiocb)
+	{
+		std::unique_lock<std::mutex> lk(m_mtx);
+		m_cache.put(aiocb);
 
-static Atomic_counter<int> pending_aio_writes;
+		/* If someone waits for cache to become full,
+		(which means all IOs are complete), notify him.*/
+		m_pending--;
+		if (m_waiters && !m_pending)
+			m_cv.notify_all();
+	}
+
+	/* Wait for completions of all AIO operations */
+	void wait()
+	{
+		std::unique_lock<std::mutex> lk(m_mtx);
+		m_waiters++;
+		while (m_pending)
+			m_cv.wait(lk);
+		m_waiters--;
+	}
+
+	tpool::task_group* get_task_group()
+	{
+		return &m_group;
+	}
+
+	~io_env()
+	{
+		wait();
+	}
+};
+
+io_env* read_env;
+io_env* write_env;
 
 /** Number of retries for partial I/O's */
 static const ulint NUM_RETRIES_ON_PARTIAL_IO = 10;
@@ -3869,18 +3925,16 @@ extern void fil_aio_callback(const tpool::aiocb *cb);
 
 static void io_callback(tpool::aiocb* cb)
 {
-	bool is_read = cb->m_opcode == tpool::AIO_PREAD;
 	fil_aio_callback(cb);
 
 	/* Return cb back to cache*/
-	if (is_read)
+	if (cb->m_opcode == tpool::AIO_PREAD)
 	{
-		read_cache->put(cb);
+		read_env->release(cb);
 	}
 	else
 	{
-		pending_aio_writes--;
-		write_cache->put(cb);
+		write_env->release(cb);
 	}
 }
 
@@ -4012,55 +4066,38 @@ static bool is_linux_native_aio_supported()
 #endif
 
 
-static void thread_pool_thread_init()
-{
-	pfs_register_thread(thread_pool_thread_key);
-}
-
-static void thread_pool_thread_destroy()
-{
-	pfs_delete_thread();
-}
 
 bool os_aio_init(ulint n_reader_threads, ulint n_writer_threads, ulint)
 {
 	int max_write_events = (int)n_writer_threads * OS_AIO_N_PENDING_IOS_PER_THREAD;
 	int max_read_events = (int)n_reader_threads * OS_AIO_N_PENDING_IOS_PER_THREAD;
+	int max_events = max_read_events + max_write_events;
 	int ret;
 
 #if LINUX_NATIVE_AIO
 	if (srv_use_native_aio && !is_linux_native_aio_supported())
 		srv_use_native_aio = false;
 #endif
-	ret = srv_thread_pool->configure_aio(srv_use_native_aio, max_write_events);
+	ret = srv_thread_pool->configure_aio(srv_use_native_aio, max_events);
 	if(ret) {
 		ut_a(srv_use_native_aio);
 		srv_use_native_aio = false;
 #ifdef LINUX_NATIVE_AIO
 		ib::info() << "Linux native AIO disabled";
 #endif
-		ret = srv_thread_pool->configure_aio(srv_use_native_aio, max_write_events);
+		ret = srv_thread_pool->configure_aio(srv_use_native_aio, max_events);
 		DBUG_ASSERT(!ret);
 	}
-	write_cache = new tpool::cache<tpool::aiocb>(max_write_events);
-
-	read_pool = tpool::create_thread_pool_generic((int)n_reader_threads, (int)n_reader_threads);
-	read_pool->set_thread_callbacks(thread_pool_thread_init, thread_pool_thread_destroy);
-	read_pool->configure_aio(false, max_read_events);
-	read_cache = new tpool::cache<tpool::aiocb>(max_read_events);
-
+	read_env = new io_env(max_read_events, (uint)n_reader_threads);
+	write_env = new io_env(max_write_events, (uint)n_writer_threads);
 	return true;
 }
 
 void os_aio_free(void)
 {
-	os_aio_wait_until_no_pending_writes();
 	srv_thread_pool->disable_aio();
-
-	delete read_pool;
-	read_pool = nullptr;
-	delete read_cache;
-	delete write_cache;
+	delete read_env;
+	delete write_env;
 }
 
 /** Waits until there are no pending writes. There can
@@ -4068,8 +4105,7 @@ be other, synchronous, pending writes. */
 void
 os_aio_wait_until_no_pending_writes()
 {
-	while(pending_aio_writes)
-		os_thread_sleep(1000);
+	write_env->wait();
 }
 
 
@@ -4140,32 +4176,22 @@ os_aio_func(
 
 	compile_time_assert(sizeof(os_aio_userdata_t) <= tpool::MAX_AIO_USERDATA_LEN);
 	os_aio_userdata_t userdata{m1,type,m2};
+	io_env* io_env = type.is_read() ? read_env : write_env;
+	tpool::aiocb* cb = io_env->acquire();
 
-	tpool::aiocb *cb = type.is_read() ? read_cache->get() : write_cache->get();
 	cb->m_buffer = buf;
 	cb->m_callback = (tpool::callback_func)io_callback;
-	cb->m_env = 0;
+	cb->m_group = io_env->get_task_group();
 	cb->m_fh = file.m_file;
 	cb->m_len = (int)n;
 	cb->m_offset = offset;
 	cb->m_opcode = type.is_read() ? tpool::AIO_PREAD : tpool::AIO_PWRITE;
 	memcpy(cb->m_userdata, &userdata, sizeof(userdata));
 
-	tpool::thread_pool *tp;
-
-	if (cb->m_opcode == tpool::AIO_PWRITE) {
-		pending_aio_writes++;
-		tp= srv_thread_pool;
-	} else {
-		// reads go to another pool, to prevent  deadlocks.
-		tp= read_pool;
-	}
-
-	if (!tp->submit_io(cb))
+	if (!srv_thread_pool->submit_io(cb))
 		return DB_SUCCESS;
 
-	if(cb->m_opcode == tpool::AIO_PWRITE)
-		pending_aio_writes--;
+	io_env->release(cb);
 
 	os_file_handle_error(name, type.is_read() ? "aio read" : "aio write");
 
@@ -4262,15 +4288,6 @@ os_aio_refresh_stats()
 	os_bytes_read_since_printout = 0;
 
 	os_last_printout = time(NULL);
-}
-
-/** Checks that all slots in the system have been freed, that is, there are
-no pending io operations.
-@return true if all free */
-bool
-os_aio_all_slots_free()
-{
-	return true;
 }
 
 

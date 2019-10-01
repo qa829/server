@@ -110,21 +110,23 @@ public:
     size_t new_capacity = new_size - 1;
     std::vector<T> new_buffer(new_capacity);
     /* Figure out faster way to copy*/
+    size_t i = 0;
     while (!empty())
     {
       T& ele = front();
       pop();
-      new_buffer.push_back(ele);
+      new_buffer[i++] = ele;
     }
     m_buffer = new_buffer;
     m_capacity = new_capacity;
-    m_head = 0;
-    m_tail = m_head + current_size;
+    m_tail = 0;
+    m_head = current_size;
   }
   void push(T ele)
   {
     if (full())
     {
+      assert(size() == m_capacity - 1);
       resize(size() + 1024);
     }
     m_buffer[m_head] = ele;
@@ -143,8 +145,13 @@ public:
   size_t size()
   {
     if (m_head < m_tail)
-      return m_tail - m_head;
-    return m_capacity - m_head - 1 + m_tail;
+    {
+      return m_capacity - m_tail + m_head;
+    }
+    else
+    {
+      return m_head - m_tail;
+    }
   }
 
   /*Iterator over elements in queue.*/

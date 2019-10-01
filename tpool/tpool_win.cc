@@ -88,8 +88,8 @@ class thread_pool_win : public thread_pool
     }
 
   public:
-    native_timer(thread_pool_win &pool, callback_func func, void *data , execution_environment *env) : 
-      m_task(func, data, env),m_pool(pool),m_callback_timer()
+    native_timer(thread_pool_win &pool, callback_func func, void *data , task_group *group) : 
+      m_task(func, data, group),m_pool(pool),m_callback_timer()
     {
       m_ptp_timer= CreateThreadpoolTimer(timer_callback, this, &pool.m_env);
     }
@@ -252,10 +252,9 @@ public:
   virtual void submit_task(task *task) override
   {
     auto entry= m_task_cache.get();
+    task->add_ref();
     entry->m_pool= this;
     entry->m_task= task;
-    if (task->m_env)
-      task->m_env->submit(task);
     if (!TrySubmitThreadpoolCallback(task_callback, entry, &m_env))
       abort();
   }
@@ -265,7 +264,7 @@ public:
     return new native_aio(*this, max_io);
   }
 
-  timer* create_timer(callback_func func, void* data, execution_environment* env)  override
+  timer* create_timer(callback_func func, void* data, task_group* env)  override
   {
     return new native_timer(*this, func, data, env);
   }

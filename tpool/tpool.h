@@ -16,7 +16,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111 - 1301 USA*/
 #pragma once
 #include <memory> /* unique_ptr */
 #include <condition_variable>
+#include <mutex>
 #include <atomic>
+#include <tpool_structs.h>
 #ifdef LINUX_NATIVE_AIO
 #include <libaio.h>
 #endif
@@ -51,53 +53,56 @@ namespace tpool
 typedef void (*callback_func)(void *);
 class task;
 
-/* A class that can be used e.g for rate limiting,
-or waiting for finished callbacks. */
-class execution_environment
+/* A class that can be used e.g for 
+restricting concurrency for specific class of tasks. */
+
+class task_group
 {
+private:
+  circular_queue<task*> m_queue;
+  std::mutex m_mtx;
+  std::condition_variable m_cv;
+  unsigned int m_tasks_running;
+  unsigned int m_max_concurrent_tasks;
 public:
-  virtual void submit(task* t) = 0;
-  virtual void cancel(task* t) = 0;
-  virtual void execute(task* t) = 0;
-  virtual void wait(task* t, bool cancel_pending) = 0;
-  virtual void wait(bool cancel_pending) = 0;
-  virtual void set_max_concurrency(unsigned int) = 0;
-  virtual ~execution_environment() {};
+  task_group(unsigned int max_concurrency= 100000);
+  void set_max_tasks(unsigned int max_concurrent_tasks);
+  void execute(task* t);
+  void cancel_pending(task *t);
+  ~task_group();
 };
 
-/* Task executor limiting concurrency.*/
-extern execution_environment* create_execution_environment();
-/**
- Task, a void function with void *argument.
-*/
-class task_wait_handle
-{
 
-};
 class task
 {
 public:
   callback_func m_func;
   void *m_arg;
-  execution_environment* m_env;
-  std::condition_variable m_cond;
-  int m_ref_count;
-  int m_waiter_count;
-
+  task_group* m_group;
+  virtual void add_ref() {};
+  virtual void release() {};
   task() {};
-  task(callback_func func, void* arg, execution_environment* env = nullptr) :
-    m_func(func), m_arg(arg), m_env(env), m_cond(), m_ref_count(),m_waiter_count(){};
+  task(callback_func func, void* arg, task_group* group = nullptr);
   void* get_arg() { return m_arg; }
   callback_func get_func() { return m_func; }
-  inline void execute()
-  {
-    if (m_env)
-      m_env->execute(this);
-    else
-      m_func(m_arg);
-  }
+  virtual void execute();
+  virtual ~task() {}
 };
 
+class waitable_task :public task
+{
+  std::mutex m_mtx;
+  std::condition_variable m_cv;
+  int m_ref_count;
+  int m_waiter_count;
+public:
+  waitable_task(callback_func func, void* arg, task_group* group = nullptr);
+  void add_ref() override;
+  void release() override;
+  bool is_running() { return m_ref_count > 0; }
+  void wait();
+  virtual ~waitable_task() {};
+};
 enum aio_opcode
 {
   AIO_PREAD,
@@ -121,7 +126,7 @@ struct aiocb
   void *m_buffer;
   unsigned int m_len;
   callback_func m_callback;
-  execution_environment* m_env;
+  task_group* m_group;
   /* Returned length and error code*/
   int m_ret_len;
   int m_err;
@@ -133,7 +138,7 @@ struct aiocb
   {}
   void execute_callback()
   {
-    task t(m_callback, this);
+    task t(m_callback, this,m_group);
     t.execute();
   }
 };
@@ -188,7 +193,7 @@ public:
   {
   }
   virtual void submit_task(task *t)= 0;
-  virtual timer* create_timer(callback_func func, void *data, execution_environment *env) = 0;
+  virtual timer* create_timer(callback_func func, void *data, task_group *m_group) = 0;
   void set_thread_callbacks(void (*init)(), void (*destroy)())
   {
     m_worker_init_callback= init;

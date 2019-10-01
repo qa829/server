@@ -240,7 +240,7 @@ class thread_pool_generic : public thread_pool
   bool get_task(worker_data *thread_var, task **t);
   bool wait_for_tasks(std::unique_lock<std::mutex> &lk,
                       worker_data *thread_var);
-  void wait(task* t,bool remove_pending);
+  void cancel_pending(task* t);
 
   size_t thread_count()
   {
@@ -264,7 +264,7 @@ public:
   class timer_generic : public thr_timer_t, public timer
   {
     thread_pool_generic* m_pool;
-    task m_task;
+    waitable_task m_task;
     callback_func m_callback;
     void* m_data;
     int m_period;
@@ -275,16 +275,8 @@ public:
     void run()
     {
       m_callback(m_data);
-
-      if ((m_pool == nullptr) != (m_period == 0))
-      {
-        fprintf(stderr, __func__ ": timer->m_pool=%p, timer->m_period=%d\n", m_pool, m_period);
-        abort();
-      }
       if (m_pool)
       {
-        assert(!period);
-        // re-execute after given period.
         std::unique_lock<std::mutex> lk(m_mtx);
         if (m_on)
         {
@@ -308,6 +300,7 @@ public:
       m_pool->submit_task(&m_task);
       m_queued = true;
     }
+
     static void submit_task(void* arg)
     {
       timer_generic* timer = (timer_generic*)arg;
@@ -315,9 +308,9 @@ public:
     }
 
   public:
-    timer_generic(callback_func func, void* data, execution_environment *env, thread_pool_generic * pool):
+    timer_generic(callback_func func, void* data, task_group *group, thread_pool_generic * pool):
       m_pool(pool),
-      m_task(timer_generic::execute,this, env),
+      m_task(timer_generic::execute,this, group),
       m_callback(func),m_data(data),m_period(0),m_mtx(),
       m_on(true),m_queued()
     {
@@ -343,11 +336,6 @@ public:
         thr_timer_set_period(this, 1000ULL * period_ms);
       else
         m_period = period_ms;
-      if ((m_pool == nullptr) != (m_period == 0))
-      {
-        fprintf(stderr, __func__ ": timer->m_pool=%p, timer->m_period=%d\n", m_pool, m_period);
-        abort();
-      }
       if (!initial_delay_ms && m_queued)
         return;
       thr_timer_settime(this, 1000ULL * initial_delay_ms);
@@ -360,44 +348,40 @@ public:
       thr_timer_end(this);
       lk.unlock();
 
+      if (m_task.m_group)
+      {
+        m_task.m_group->cancel_pending(&m_task);
+      }
       if (m_pool)
-        m_pool->wait(&m_task, true);
+      {
+        m_pool->cancel_pending(&m_task);
+      }
+      m_task.wait();
     }
+
     virtual ~timer_generic()
     {
       disarm(); 
     }
   };
 
-  virtual timer* create_timer(callback_func func, void *data, execution_environment *env) override
+  virtual timer* create_timer(callback_func func, void *data, task_group *env) override
   {
     return new timer_generic(func, data, env, this);
   }
 };
 
-static void dummy_func(void*)
+void thread_pool_generic::cancel_pending(task* t)
 {
-}
-static task dummy_task(dummy_func, nullptr, nullptr);
-
-void thread_pool_generic::wait(task* t, bool remove_pending)
-{
-  if (!t->m_env)
-    abort();
   std::unique_lock <std::mutex> lk(m_mtx);
-  if (remove_pending)
+  for (auto it = m_task_queue.begin(); it != m_task_queue.end(); it++)
   {
-    for (auto it = m_task_queue.begin(); it != m_task_queue.end(); it++)
+    if (*it == t)
     {
-      if (*it == t)
-      {
-        t->m_env->cancel(t);
-        *it = nullptr;
-      }
+      t->release();
+      *it = nullptr;
     }
   }
-  lk.unlock();
-  t->m_env->wait(t, remove_pending);
 }
 /**
   Register worker in standby list, and wait to be woken.
@@ -702,8 +686,7 @@ void thread_pool_generic::submit_task(task* task)
   std::unique_lock<std::mutex> lk(m_mtx);
   if (m_in_shutdown)
     return;
-  if (task->m_env)
-    task->m_env->submit(task);
+  task->add_ref();
   m_task_queue.push(task);
 
   if (m_active_threads.size() - m_long_tasks_count < m_concurrency)

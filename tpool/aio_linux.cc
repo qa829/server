@@ -73,7 +73,7 @@ class aio_linux : public aio
 
         iocb->m_internal_task.m_func = iocb->m_callback;
         iocb->m_internal_task.m_arg = iocb;
-        iocb->m_internal_task.m_env = iocb->m_env;
+        iocb->m_internal_task.m_group = iocb->m_group;
         aio->m_pool->submit_task(&iocb->m_internal_task);
         continue;
       }
