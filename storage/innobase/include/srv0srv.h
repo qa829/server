@@ -204,13 +204,6 @@ extern const char*	srv_main_thread_op_info;
 /** Prefix used by MySQL to indicate pre-5.1 table name encoding */
 extern const char	srv_mysql50_table_name_prefix[10];
 
-/** Event to signal srv_monitor_thread. Not protected by a mutex.
-Set after setting srv_print_innodb_monitor. */
-extern os_event_t	srv_monitor_event;
-
-/** The buffer pool resize thread waits on this event. */
-extern os_event_t	srv_buf_resize_event;
-
 /** The buffer pool dump/load file name */
 #define SRV_BUF_DUMP_FILENAME_DEFAULT	"ib_buffer_pool"
 extern char*		srv_buf_dump_filename;
@@ -498,9 +491,6 @@ extern ibool	srv_print_verbose_log;
 
 extern bool	srv_monitor_active;
 
-
-/* true during the lifetime of the buffer pool resize thread */
-extern bool	srv_buf_resize_thread_active;
 
 /* TRUE during the lifetime of the stats thread */
 extern bool	srv_dict_stats_thread_active;

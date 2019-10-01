@@ -173,7 +173,8 @@ class thread_pool_win : public thread_pool
       tls_data.callback_prolog(&aio->m_pool);
       cb->m_err = io_result;
       cb->m_ret_len = (int)nbytes;
-      cb->execute_callback();
+      task t(cb->m_callback, cb, cb->m_group);
+      t.execute();
     }
 
     /**

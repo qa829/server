@@ -183,9 +183,6 @@ class thread_pool_generic : public thread_pool
   /** Condition variable for the timer thread. Signaled on shutdown.*/
   std::condition_variable m_cv_timer;
 
-  /** The timer thread. Will be join()ed on shutdown.*/
-  std::thread m_timer_thread;
-
   /** Overall number of dequeued tasks. */
   unsigned int m_tasks_dequeued;
 
@@ -515,7 +512,24 @@ void thread_pool_generic::worker_main(worker_data *thread_var)
 */
 void thread_pool_generic::maintainence()
 {
-  std::unique_lock<std::mutex> lk(m_mtx);
+  /*
+    If pool is busy (i.e the its mutex is currently locked), we can
+    skip the maintainence task, some times, to lower mutex contention
+  */
+  static int skip_counter;
+  const int MAX_SKIPS = 10;
+  std::unique_lock<std::mutex> lk(m_mtx, std::defer_lock);
+  if (skip_counter == MAX_SKIPS)
+  {
+    lk.lock();
+  }
+  else if (!lk.try_lock())
+  {
+    skip_counter++;
+    return;
+  }
+
+  skip_counter = 0;
 
   m_timestamp = std::chrono::system_clock::now();
 
@@ -594,9 +608,25 @@ bool thread_pool_generic::add_thread()
 
   worker_data *thread_data = m_thread_data_cache.get();
   m_active_threads.push_back(thread_data);
-  std::thread thread(&thread_pool_generic::worker_main,this, thread_data);
-  m_last_thread_creation = std::chrono::system_clock::now();
-  thread.detach();
+  try
+  {
+    std::thread thread(&thread_pool_generic::worker_main, this, thread_data);
+    m_last_thread_creation = std::chrono::system_clock::now();
+    thread.detach();
+  }
+  catch (std::system_error& e)
+  {
+    m_active_threads.erase(thread_data);
+    m_thread_data_cache.put(thread_data);
+    static bool warning_written;
+    if (!warning_written)
+    {
+      fprintf(stderr, "Warning : threadpool thread could not be created :%s,"
+        "current number of threads in pool %zu\n", e.what(), thread_count());
+      warning_written = true;
+    }
+    return false;
+  }
   return true;
 }
 

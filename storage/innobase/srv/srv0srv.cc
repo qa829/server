@@ -86,7 +86,6 @@ in microseconds, in order to reduce the lagging of the purge thread. */
 ulint	srv_dml_needed_delay;
 
 bool	srv_dict_stats_thread_active;
-bool	srv_buf_resize_thread_active;
 
 my_bool	srv_scrub_log;
 
@@ -610,8 +609,6 @@ bool purge_sys_t::running()
 std::unique_ptr<tpool::timer> srv_error_monitor_timer;
 std::unique_ptr<tpool::timer> srv_monitor_timer;
 
-/** Event to signal the buffer pool resize thread */
-os_event_t	srv_buf_resize_event;
 
 /** The buffer pool dump/load file name */
 char*	srv_buf_dump_filename;
@@ -1018,6 +1015,7 @@ void srv_thread_pool_end()
 	srv_thread_pool = nullptr;
 }
 
+static bool need_srv_free;
 
 /** Initialize the server. */
 static
@@ -1049,8 +1047,7 @@ srv_init()
 		UT_LIST_INIT(srv_sys.tasks, &que_thr_t::queue);
 	}
 
-	srv_buf_resize_event = os_event_create(0);
-
+	need_srv_free = true;
 	ut_d(srv_master_thread_disabled_event = os_event_create(0));
 
 	/* page_zip_stat_per_index_mutex is acquired from:
@@ -1088,7 +1085,7 @@ void
 srv_free(void)
 /*==========*/
 {
-	if (!srv_buf_resize_event) {
+	if (!need_srv_free) {
 		return;
 	}
 
@@ -1104,8 +1101,6 @@ srv_free(void)
 		}
 		os_event_destroy(buf_flush_event);
 	}
-
-	os_event_destroy(srv_buf_resize_event);
 
 	ut_d(os_event_destroy(srv_master_thread_disabled_event));
 

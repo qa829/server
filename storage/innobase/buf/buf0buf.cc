@@ -3194,47 +3194,37 @@ calc_buf_pool_size:
 	return;
 }
 
-/** This is the thread for resizing buffer pool. It waits for an event and
-when waked up either performs a resizing and sleeps again.
-@return	this function does not return, calls os_thread_exit()
-*/
-extern "C"
-os_thread_ret_t
-DECLARE_THREAD(buf_resize_thread)(void*)
+/* Thread pool task invoked by innodb_buffer_pool_size changes. */
+static void buf_resize_func(void *)
 {
-	my_thread_init();
-
-	while (srv_shutdown_state == SRV_SHUTDOWN_NONE) {
-		os_event_wait(srv_buf_resize_event);
-		os_event_reset(srv_buf_resize_event);
-
-		if (srv_shutdown_state != SRV_SHUTDOWN_NONE) {
-			break;
-		}
-
-		buf_pool_mutex_enter_all();
-		if (srv_buf_pool_old_size == srv_buf_pool_size) {
-			buf_pool_mutex_exit_all();
-			std::ostringstream sout;
-			sout << "Size did not change (old size = new size = "
-				<< srv_buf_pool_size << ". Nothing to do.";
-			buf_resize_status(sout.str().c_str());
-
-			/* nothing to do */
-			continue;
-		}
+	ut_a(srv_shutdown_state == SRV_SHUTDOWN_NONE);
+	buf_pool_mutex_enter_all();
+	if (srv_buf_pool_old_size == srv_buf_pool_size) {
 		buf_pool_mutex_exit_all();
-
-		buf_pool_resize();
+		std::ostringstream sout;
+		sout << "Size did not change (old size = new size = "
+			<< srv_buf_pool_size << ". Nothing to do.";
+			buf_resize_status(sout.str().c_str());
+		return;
 	}
-
-	srv_buf_resize_thread_active = false;
-
-	my_thread_end();
-	os_thread_exit();
-
-	OS_THREAD_DUMMY_RETURN;
+	buf_pool_mutex_exit_all();
+	buf_pool_resize();
 }
+
+/* Ensure that task does not run in parallel, by setting max_concurrency to 1 for the thread group */
+static tpool::task_group single_threaded_group(1);
+static tpool::waitable_task buf_resize_task(buf_resize_func, 0, &single_threaded_group);
+#include <tp0tp.h>
+void buf_resize_start()
+{
+	srv_thread_pool->submit_task(&buf_resize_task);
+}
+
+void buf_resize_end()
+{
+	buf_resize_task.wait();
+}
+
 
 #ifdef BTR_CUR_HASH_ADAPT
 /** Clear the adaptive hash index on all pages in the buffer pool. */

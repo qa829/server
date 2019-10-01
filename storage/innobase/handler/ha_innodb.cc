@@ -71,6 +71,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "btr0sea.h"
 #include "buf0dblwr.h"
 #include "buf0dump.h"
+#include "buf0buf.h"
 #include "buf0flu.h"
 #include "buf0lru.h"
 #include "dict0boot.h"
@@ -16984,6 +16985,8 @@ innodb_stopword_table_validate(
 	return(ret);
 }
 
+extern void buf_resize_start();
+
 /** Update the system variable innodb_buffer_pool_size using the "saved"
 value. This function is registered as a callback with MySQL.
 @param[in]	save	immediate result from check function */
@@ -16997,7 +17000,7 @@ innodb_buffer_pool_size_update(THD*,st_mysql_sys_var*,void*, const void* save)
 	        sizeof(export_vars.innodb_buffer_pool_resize_status),
 		"Requested to resize buffer pool.");
 
-	os_event_set(srv_buf_resize_event);
+  buf_resize_start();
 
 	ib::info() << export_vars.innodb_buffer_pool_resize_status
 		<< " (new size: " << in_val << " bytes)";

@@ -2313,10 +2313,6 @@ skip_monitors:
 		srv_start_state |= SRV_START_STATE_REDO;
 	}
 
-	/* Create the buffer pool resize thread */
-	srv_buf_resize_thread_active = true;
-	os_thread_create(buf_resize_thread, NULL, NULL);
-
 	return(DB_SUCCESS);
 }
 

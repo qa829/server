@@ -1565,6 +1565,7 @@ log_check_margins(void)
 	} while (check);
 }
 
+extern void buf_resize_end();
 /****************************************************************//**
 Makes a checkpoint at the latest lsn and writes it to first page of each
 data file in the database, so that we know that the file spaces contain
@@ -1586,9 +1587,16 @@ logs_empty_and_mark_files_at_shutdown(void)
 		do_srv_shutdown = srv_fast_shutdown < 2;
 		srv_master_timer.reset();
 	}
+
+	/* Wait for the end of the buffer resize task.*/
+	buf_resize_end();
+
 	srv_shutdown_state = SRV_SHUTDOWN_CLEANUP;
-	if (srv_buffer_pool_dump_at_shutdown && !srv_read_only_mode && srv_fast_shutdown < 2)
+
+	if (srv_buffer_pool_dump_at_shutdown &&
+		!srv_read_only_mode && srv_fast_shutdown < 2) {
 		buf_dump_start();
+	}
 	srv_error_monitor_timer.reset();
 	srv_monitor_timer.reset();
 	lock_sys.timeout_timer.reset();
@@ -1601,7 +1609,6 @@ loop:
 	ut_ad(lock_sys.is_initialised() || !srv_was_started);
 	ut_ad(log_sys.is_initialised() || !srv_was_started);
 	ut_ad(fil_system.is_initialised() || !srv_was_started);
-	os_event_set(srv_buf_resize_event);
 
 	if (!srv_read_only_mode) {
 		if (dict_stats_event) {
@@ -1648,10 +1655,7 @@ loop:
 	/* We need these threads to stop early in shutdown. */
 	const char* thread_name;
 
-	if (srv_buf_resize_thread_active) {
-		thread_name = "buf_resize_thread";
-		goto wait_suspend_loop;
-	} else if (srv_dict_stats_thread_active) {
+	if (srv_dict_stats_thread_active) {
 		thread_name = "dict_stats_thread";
 	} else if (btr_defragment_thread_active) {
 		thread_name = "btr_defragment_thread";
