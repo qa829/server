@@ -1565,7 +1565,7 @@ log_check_margins(void)
 	} while (check);
 }
 
-extern void buf_resize_end();
+extern void buf_resize_shutdown();
 /****************************************************************//**
 Makes a checkpoint at the latest lsn and writes it to first page of each
 data file in the database, so that we know that the file spaces contain
@@ -1589,7 +1589,8 @@ logs_empty_and_mark_files_at_shutdown(void)
 	}
 
 	/* Wait for the end of the buffer resize task.*/
-	buf_resize_end();
+	buf_resize_shutdown();
+	dict_stats_shutdown();
 
 	srv_shutdown_state = SRV_SHUTDOWN_CLEANUP;
 
@@ -1611,11 +1612,6 @@ loop:
 	ut_ad(fil_system.is_initialised() || !srv_was_started);
 
 	if (!srv_read_only_mode) {
-		if (dict_stats_event) {
-			os_event_set(dict_stats_event);
-		} else {
-			ut_ad(!srv_dict_stats_thread_active);
-		}
 		if (recv_sys.flush_start) {
 			/* This is in case recv_writer_thread was never
 			started, or buf_flush_page_cleaner_coordinator
@@ -1655,9 +1651,7 @@ loop:
 	/* We need these threads to stop early in shutdown. */
 	const char* thread_name;
 
-	if (srv_dict_stats_thread_active) {
-		thread_name = "dict_stats_thread";
-	} else if (btr_defragment_thread_active) {
+	if (btr_defragment_thread_active) {
 		thread_name = "btr_defragment_thread";
 	} else if (srv_fast_shutdown != 2 && trx_rollback_is_active) {
 		thread_name = "rollback of recovered transactions";

@@ -492,9 +492,6 @@ extern ibool	srv_print_verbose_log;
 extern bool	srv_monitor_active;
 
 
-/* TRUE during the lifetime of the stats thread */
-extern bool	srv_dict_stats_thread_active;
-
 /* TRUE if enable log scrubbing */
 extern my_bool	srv_scrub_log;
 

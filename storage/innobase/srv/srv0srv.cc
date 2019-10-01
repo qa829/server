@@ -85,8 +85,6 @@ UNIV_INTERN ulong	srv_fatal_semaphore_wait_threshold =  DEFAULT_SRV_FATAL_SEMAPH
 in microseconds, in order to reduce the lagging of the purge thread. */
 ulint	srv_dml_needed_delay;
 
-bool	srv_dict_stats_thread_active;
-
 my_bool	srv_scrub_log;
 
 const char*	srv_main_thread_op_info = "";

@@ -3220,7 +3220,7 @@ void buf_resize_start()
 	srv_thread_pool->submit_task(&buf_resize_task);
 }
 
-void buf_resize_end()
+void buf_resize_shutdown()
 {
 	buf_resize_task.wait();
 }

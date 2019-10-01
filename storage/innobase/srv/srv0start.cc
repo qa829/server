@@ -1709,7 +1709,7 @@ files_checked:
 	/* Initialize objects used by dict stats gathering thread, which
 	can also be used by recovery if it tries to drop some table */
 	if (!srv_read_only_mode) {
-		dict_stats_thread_init();
+		dict_stats_init();
 	}
 
 	trx_sys.create();
@@ -2166,11 +2166,8 @@ skip_monitors:
 
 		if (srv_force_recovery < SRV_FORCE_NO_BACKGROUND) {
 			srv_undo_sources = true;
-			/* Create the dict stats gathering thread */
-			srv_dict_stats_thread_active = true;
-			dict_stats_thread_handle = os_thread_create(
-				dict_stats_thread, NULL, NULL);
-
+			/* Create the dict stats gathering task */
+			dict_stats_start();
 			/* Create the thread that will optimize the
 			FULLTEXT search index subsystem. */
 			fts_optimize_init();
@@ -2372,7 +2369,6 @@ void innodb_shutdown()
 		srv_misc_tmpfile = 0;
 	}
 
-	ut_ad(dict_stats_event || !srv_was_started || srv_read_only_mode);
 	ut_ad(dict_sys.is_initialised() || !srv_was_started);
 	ut_ad(trx_sys.is_initialised() || !srv_was_started);
 	ut_ad(buf_dblwr || !srv_was_started || srv_read_only_mode
@@ -2384,9 +2380,7 @@ void innodb_shutdown()
 #endif /* BTR_CUR_HASH_ADAPT */
 	ut_ad(ibuf.index || !srv_was_started);
 
-	if (dict_stats_event) {
-		dict_stats_thread_deinit();
-	}
+	dict_stats_deinit();
 
 	if (srv_start_state_is_set(SRV_START_STATE_REDO)) {
 		ut_ad(!srv_read_only_mode);
