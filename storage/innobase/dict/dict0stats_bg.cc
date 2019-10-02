@@ -313,12 +313,11 @@ void
 dict_stats_deinit()
 /*======================*/
 {
-	ut_a(!srv_read_only_mode);
-
 	if (!stats_initialised) {
 		return;
 	}
 
+	ut_a(!srv_read_only_mode);
 	stats_initialised = false;
 
 	dict_stats_recalc_pool_deinit();
@@ -415,7 +414,7 @@ void dict_stats_disabled_debug_update(THD*, st_mysql_sys_var*, void*,
 }
 #endif /* UNIV_DEBUG */
 
-
+#include <tp0tp.h>
 extern tpool::thread_pool *srv_thread_pool;
 static tpool::timer* dict_stats_timer;
 std::mutex dict_stats_mutex;

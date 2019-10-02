@@ -659,7 +659,7 @@ thread_pool_generic::thread_pool_generic(int min_threads, int max_threads) :
   m_active_threads(),
   m_mtx(),
   m_thread_timeout(std::chrono::milliseconds(60000)),
-  m_timer_interval(std::chrono::milliseconds(100)),
+  m_timer_interval(std::chrono::milliseconds(400)),
   m_cv_no_threads(),
   m_cv_timer(),
   m_tasks_dequeued(),

@@ -179,7 +179,6 @@ static os_thread_id_t	thread_ids[SRV_MAX_N_IO_THREADS + 6 + 32];
 
 /** Thead handles */
 static os_thread_t	thread_handles[SRV_MAX_N_IO_THREADS + 6 + 32];
-static os_thread_t	dict_stats_thread_handle;
 /** Status variables, is thread started ?*/
 static bool		thread_started[SRV_MAX_N_IO_THREADS + 6 + 32] = {false};
 /** Name of srv_monitor_file */
