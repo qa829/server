@@ -76,50 +76,35 @@ class thread_pool_win : public thread_pool
     PTP_TIMER m_ptp_timer;
     task m_task;
     thread_pool_win& m_pool;
-    PTP_TIMER m_callback_timer;
     int m_period;
-    bool m_on;
 
     static void CALLBACK timer_callback(PTP_CALLBACK_INSTANCE callback_instance, void *context,
                                         PTP_TIMER callback_timer)
     {
       native_timer *timer= (native_timer *) context;
-      timer->m_callback_timer= callback_timer;
       tls_data.callback_prolog(&timer->m_pool);
       timer->m_task.execute();
-      timer->m_callback_timer= 0;
       if (timer->m_period)
         timer->set_time(timer->m_period, timer->m_period);
     }
 
   public:
     native_timer(thread_pool_win &pool, callback_func func, void *data , task_group *group) : 
-      m_mtx(),m_task(func, data, group),m_pool(pool),m_callback_timer(),m_period(), m_on(true)
+      m_mtx(),m_task(func, data, group),m_pool(pool),m_period()
     {
       m_ptp_timer= CreateThreadpoolTimer(timer_callback, this, &pool.m_env);
     }
     void set_time(int initial_delay_ms, int period_ms) override
     {
-      std::unique_lock<std::mutex> lk(m_mtx);
-      if (!m_on)
-        return;
-      long long initial_delay = -10000LL * initial_delay_ms;
-      SetThreadpoolTimer(m_ptp_timer, (PFILETIME) &initial_delay, 0, 100);
-      m_period = period_ms;
+       long long initial_delay = -10000LL * initial_delay_ms;;
+       SetThreadpoolTimer(m_ptp_timer, (PFILETIME)& initial_delay, 0, 100);
+       m_period = period_ms;
     }
     void disarm() override
     {
-      std::unique_lock<std::mutex> lk(m_mtx);
-      m_on = false;
       SetThreadpoolTimer(m_ptp_timer, nullptr, 0, 0);
-      /*
-        Wait for currently running callbacks, but don't wait for
-        current callback, this would deadlock.
-      */
-      if (m_callback_timer != m_ptp_timer)
-      {
-        WaitForThreadpoolTimerCallbacks(m_ptp_timer, TRUE);
-      }
+      /* Don't do it in timer callback, that will hang*/
+      WaitForThreadpoolTimerCallbacks(m_ptp_timer, TRUE);
     }
 
     ~native_timer()
@@ -236,7 +221,7 @@ public:
   }
   ~thread_pool_win()
   {
-    CloseThreadpoolCleanupGroupMembers(m_cleanup, FALSE, NULL);
+    CloseThreadpoolCleanupGroupMembers(m_cleanup, TRUE, NULL);
     CloseThreadpoolCleanupGroup(m_cleanup);
     CloseThreadpool(m_ptp_pool);
 

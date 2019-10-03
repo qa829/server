@@ -267,17 +267,28 @@ public:
     int m_period;
     std::mutex m_mtx;
     bool m_on;
-    bool m_queued;
+    std::atomic<bool> m_running;
 
     void run()
     {
+      /*
+        In rare cases, multiple callbacks can be scheduled,
+        e.g with set_time(0,0) in a loop.
+        We do not allow parallel execution, as user is not prepared.
+      */
+      bool expected = false;
+      if (!m_running.compare_exchange_strong(expected, true))
+        return;
+
       m_callback(m_data);
-      if (m_pool)
+
+      m_running = false;
+
+      if (m_pool && m_period)
       {
         std::unique_lock<std::mutex> lk(m_mtx);
-        if (m_on && m_period)
+        if (m_on)
         {
-          m_queued = false;
           thr_timer_end(this);
           thr_timer_settime(this, 1000ULL * m_period);
         }
@@ -294,7 +305,6 @@ public:
     {
       timer_generic* timer = (timer_generic*)arg;
       timer->m_pool->submit_task(&timer->m_task);
-      timer->m_queued = true;
     }
 
   public:
@@ -302,7 +312,7 @@ public:
       m_pool(pool),
       m_task(timer_generic::execute,this, group),
       m_callback(func),m_data(data),m_period(0),m_mtx(),
-      m_on(true),m_queued()
+      m_on(true),m_running()
     {
       if (pool)
       {
@@ -326,8 +336,6 @@ public:
         thr_timer_set_period(this, 1000ULL * period_ms);
       else
         m_period = period_ms;
-      if (!initial_delay_ms && m_queued)
-        return;
       thr_timer_settime(this, 1000ULL * initial_delay_ms);
     }
 
