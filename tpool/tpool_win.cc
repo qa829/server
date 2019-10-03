@@ -72,11 +72,13 @@ class thread_pool_win : public thread_pool
   /** Timer */
   class native_timer : public timer
   {
+    std::mutex m_mtx;
     PTP_TIMER m_ptp_timer;
     task m_task;
     thread_pool_win& m_pool;
     PTP_TIMER m_callback_timer;
     int m_period;
+    bool m_on;
 
     static void CALLBACK timer_callback(PTP_CALLBACK_INSTANCE callback_instance, void *context,
                                         PTP_TIMER callback_timer)
@@ -92,28 +94,23 @@ class thread_pool_win : public thread_pool
 
   public:
     native_timer(thread_pool_win &pool, callback_func func, void *data , task_group *group) : 
-      m_task(func, data, group),m_pool(pool),m_callback_timer(),m_period()
+      m_mtx(),m_task(func, data, group),m_pool(pool),m_callback_timer(),m_period(), m_on(true)
     {
       m_ptp_timer= CreateThreadpoolTimer(timer_callback, this, &pool.m_env);
     }
     void set_time(int initial_delay_ms, int period_ms) override
     {
-      unsigned long long initial_time_abs;
-      if (initial_delay_ms == 0)
-      {
-        initial_time_abs = 0;
-      }
-      else
-      {
-        GetSystemTimeAsFileTime((PFILETIME)& initial_time_abs);
-        initial_time_abs += 10000ULL*initial_delay_ms;
-      }
+      std::unique_lock<std::mutex> lk(m_mtx);
+      if (!m_on)
+        return;
+      long long initial_delay = -10000LL * initial_delay_ms;
+      SetThreadpoolTimer(m_ptp_timer, (PFILETIME) &initial_delay, 0, 100);
       m_period = period_ms;
-      SetThreadpoolTimer(m_ptp_timer, (PFILETIME) &initial_time_abs, 0,
-                         1000);
     }
     void disarm() override
     {
+      std::unique_lock<std::mutex> lk(m_mtx);
+      m_on = false;
       SetThreadpoolTimer(m_ptp_timer, nullptr, 0, 0);
       /*
         Wait for currently running callbacks, but don't wait for
