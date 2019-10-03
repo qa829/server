@@ -74,6 +74,13 @@ Atomic_counter<ulint> btr_defragment_count;
 bool btr_defragment_active;
 #include <tp0tp.h>
 tpool::timer* btr_defragment_timer;
+struct defragment_chunk_state_t
+{
+  btr_defragment_item_t* m_item;
+  tpool::timer** m_timer;
+};
+
+static defragment_chunk_state_t defragment_chunk_state;
 static void btr_defragment_chunk(void*);
 static void btr_defragment_timer_start();
 
@@ -107,7 +114,9 @@ btr_defragment_init()
 {
 	srv_defragment_interval = 1000000000ULL / srv_defragment_frequency;
 	mutex_create(LATCH_ID_BTR_DEFRAGMENT_MUTEX, &btr_defragment_mutex);
-	btr_defragment_timer = srv_thread_pool->create_timer(btr_defragment_chunk, 0, 0);
+  defragment_chunk_state.m_item = 0;
+  defragment_chunk_state.m_timer = &btr_defragment_timer;
+	btr_defragment_timer = srv_thread_pool->create_timer(btr_defragment_chunk, &defragment_chunk_state, 0);
 	btr_defragment_active = true;
 }
 
@@ -707,9 +716,21 @@ void btr_defragment_timer_start() {
   btr_defragment_timer->set_time(0, 0);
 }
 
-static void btr_defragment_chunk(void*)
+/**
+Function used by defragment timer
+
+Throttling "sleep", is implemented via rescheduling the
+threadpool timer, which, when fired, will resume the work again,
+where it is left.
+
+The state (current item) is stored in function parameter.
+*/
+static void btr_defragment_chunk(void* arg)
 {
-  static btr_defragment_item_t* item;
+  defragment_chunk_state_t* state = (defragment_chunk_state_t*)arg;
+  ut_ad(state);
+  ut_ad(state->m_timer);
+
   btr_pcur_t* pcur;
   btr_cur_t* cursor;
   dict_index_t* index;
@@ -718,18 +739,20 @@ static void btr_defragment_chunk(void*)
   buf_block_t* last_block;
 
   while (srv_shutdown_state == SRV_SHUTDOWN_NONE) {
-    if (!item) {
-      item = btr_defragment_get_item();
+    if (!state->m_item) {
+      state->m_item = btr_defragment_get_item();
     }
-    if (item && item->removed) {
-      btr_defragment_remove_item(item);
-      item = btr_defragment_get_item();
+    if (state->m_item && state->m_item->removed) {
+      btr_defragment_remove_item(state->m_item);
+      state->m_item = btr_defragment_get_item();
     }
-    if (!item)
+    if (!state->m_item) {
+      /* Queue empty */
       return;
-    pcur = item->pcur;
+    }
+    pcur = state->m_item->pcur;
     ulonglong now = my_interval_timer();
-    ulonglong elapsed = now - item->last_processed;
+    ulonglong elapsed = now - state->m_item->last_processed;
 
     if (elapsed < srv_defragment_interval) {
       /* If we see an index again before the interval
@@ -740,7 +763,7 @@ static void btr_defragment_chunk(void*)
       don't need to sleep again. */
       int sleep_ms = (int)((srv_defragment_interval - elapsed) / 1000 / 1000);
       if (sleep_ms) {
-        btr_defragment_timer->set_time(sleep_ms, 0);
+        (*state->m_timer)->set_time(sleep_ms, 0);
         return;
       }
     }
@@ -772,7 +795,7 @@ static void btr_defragment_chunk(void*)
       btr_pcur_store_position(pcur, &mtr);
       mtr_commit(&mtr);
       /* Update the last_processed time of this index. */
-      item->last_processed = now;
+      state->m_item->last_processed = now;
     }
     else {
       dberr_t err = DB_SUCCESS;
@@ -796,7 +819,8 @@ static void btr_defragment_chunk(void*)
             << " failed with error " << err;
         }
       }
-      btr_defragment_remove_item(item);
+      btr_defragment_remove_item(state->m_item);
+      state->m_item = NULL;
     }
   }
 }
