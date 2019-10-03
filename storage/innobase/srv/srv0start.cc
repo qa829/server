@@ -157,7 +157,7 @@ enum srv_start_state_t {
 	SRV_START_STATE_MASTER = 8,
 	/** srv_purge_coordinator_thread, srv_worker_thread started */
 	SRV_START_STATE_PURGE = 16,
-	/** fil_crypt_thread, btr_defragment_thread started
+	/** fil_crypt_thread,
 	(all background threads that can generate redo log but not undo log */
 	SRV_START_STATE_REDO = 32
 };
@@ -2303,8 +2303,6 @@ skip_monitors:
 
 		/* Initialize online defragmentation. */
 		btr_defragment_init();
-		btr_defragment_thread_active = true;
-		os_thread_create(btr_defragment_thread, NULL, NULL);
 
 		srv_start_state |= SRV_START_STATE_REDO;
 	}

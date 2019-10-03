@@ -76,6 +76,7 @@ class thread_pool_win : public thread_pool
     task m_task;
     thread_pool_win& m_pool;
     PTP_TIMER m_callback_timer;
+    int m_period;
 
     static void CALLBACK timer_callback(PTP_CALLBACK_INSTANCE callback_instance, void *context,
                                         PTP_TIMER callback_timer)
@@ -85,20 +86,30 @@ class thread_pool_win : public thread_pool
       tls_data.callback_prolog(&timer->m_pool);
       timer->m_task.execute();
       timer->m_callback_timer= 0;
+      if (timer->m_period)
+        timer->set_time(timer->m_period, timer->m_period);
     }
 
   public:
     native_timer(thread_pool_win &pool, callback_func func, void *data , task_group *group) : 
-      m_task(func, data, group),m_pool(pool),m_callback_timer()
+      m_task(func, data, group),m_pool(pool),m_callback_timer(),m_period()
     {
       m_ptp_timer= CreateThreadpoolTimer(timer_callback, this, &pool.m_env);
     }
     void set_time(int initial_delay_ms, int period_ms) override
     {
       unsigned long long initial_time_abs;
-      GetSystemTimeAsFileTime((PFILETIME) &initial_time_abs);
-      initial_time_abs+= initial_delay_ms;
-      SetThreadpoolTimer(m_ptp_timer, (PFILETIME) &initial_time_abs, period_ms,
+      if (initial_delay_ms == 0)
+      {
+        initial_time_abs = 0;
+      }
+      else
+      {
+        GetSystemTimeAsFileTime((PFILETIME)& initial_time_abs);
+        initial_time_abs += 10000ULL*initial_delay_ms;
+      }
+      m_period = period_ms;
+      SetThreadpoolTimer(m_ptp_timer, (PFILETIME) &initial_time_abs, 0,
                          1000);
     }
     void disarm() override

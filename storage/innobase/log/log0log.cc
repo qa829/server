@@ -1591,6 +1591,7 @@ logs_empty_and_mark_files_at_shutdown(void)
 	/* Wait for the end of the buffer resize task.*/
 	buf_resize_shutdown();
 	dict_stats_shutdown();
+  btr_defragment_shutdown();
 
 	srv_shutdown_state = SRV_SHUTDOWN_CLEANUP;
 
@@ -1651,9 +1652,7 @@ loop:
 	/* We need these threads to stop early in shutdown. */
 	const char* thread_name;
 
-	if (btr_defragment_thread_active) {
-		thread_name = "btr_defragment_thread";
-	} else if (srv_fast_shutdown != 2 && trx_rollback_is_active) {
+   if (srv_fast_shutdown != 2 && trx_rollback_is_active) {
 		thread_name = "rollback of recovered transactions";
 	} else {
 		thread_name = NULL;

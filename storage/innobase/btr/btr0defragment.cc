@@ -71,6 +71,12 @@ The difference between btr_defragment_count and btr_defragment_failures shows
 the amount of effort wasted. */
 Atomic_counter<ulint> btr_defragment_count;
 
+bool btr_defragment_active;
+#include <tp0tp.h>
+tpool::timer* btr_defragment_timer;
+static void btr_defragment_chunk(void*);
+static void btr_defragment_timer_start();
+
 /******************************************************************//**
 Constructor for btr_defragment_item_t. */
 btr_defragment_item_t::btr_defragment_item_t(
@@ -101,6 +107,8 @@ btr_defragment_init()
 {
 	srv_defragment_interval = 1000000000ULL / srv_defragment_frequency;
 	mutex_create(LATCH_ID_BTR_DEFRAGMENT_MUTEX, &btr_defragment_mutex);
+	btr_defragment_timer = srv_thread_pool->create_timer(btr_defragment_chunk, 0, 0);
+	btr_defragment_active = true;
 }
 
 /******************************************************************//**
@@ -108,6 +116,11 @@ Shutdown defragmentation. Release all resources. */
 void
 btr_defragment_shutdown()
 {
+  if (!btr_defragment_timer)
+    return;
+	delete btr_defragment_timer;
+  btr_defragment_timer = 0;
+
 	mutex_enter(&btr_defragment_mutex);
 	std::list< btr_defragment_item_t* >::iterator iter = btr_defragment_wq.begin();
 	while(iter != btr_defragment_wq.end()) {
@@ -201,6 +214,9 @@ btr_defragment_add_index(
 	btr_defragment_item_t*	item = new btr_defragment_item_t(pcur, event);
 	mutex_enter(&btr_defragment_mutex);
 	btr_defragment_wq.push_back(item);
+	if(btr_defragment_wq.size() == 1){
+		btr_defragment_timer_start();
+	}
 	mutex_exit(&btr_defragment_mutex);
 	return event;
 }
@@ -681,123 +697,106 @@ btr_defragment_n_pages(
 	return current_block;
 }
 
-/** Whether btr_defragment_thread is active */
-bool btr_defragment_thread_active;
 
-/** Merge consecutive b-tree pages into fewer pages to defragment indexes */
-extern "C" UNIV_INTERN
-os_thread_ret_t
-DECLARE_THREAD(btr_defragment_thread)(void*)
+
+void btr_defragment_timer_start() {
+  if (!srv_defragment)
+    return;
+  ut_ad(!btr_defragment_wq.empty());
+  
+  btr_defragment_timer->set_time(0, 0);
+}
+
+static void btr_defragment_chunk(void*)
 {
-	btr_pcur_t*	pcur;
-	btr_cur_t*	cursor;
-	dict_index_t*	index;
-	mtr_t		mtr;
-	buf_block_t*	first_block;
-	buf_block_t*	last_block;
+  static btr_defragment_item_t* item;
+  btr_pcur_t* pcur;
+  btr_cur_t* cursor;
+  dict_index_t* index;
+  mtr_t		mtr;
+  buf_block_t* first_block;
+  buf_block_t* last_block;
 
-	while (srv_shutdown_state == SRV_SHUTDOWN_NONE) {
-		ut_ad(btr_defragment_thread_active);
+  while (srv_shutdown_state == SRV_SHUTDOWN_NONE) {
+    if (!item) {
+      item = btr_defragment_get_item();
+    }
+    if (item && item->removed) {
+      btr_defragment_remove_item(item);
+      item = btr_defragment_get_item();
+    }
+    if (!item)
+      return;
+    pcur = item->pcur;
+    ulonglong now = my_interval_timer();
+    ulonglong elapsed = now - item->last_processed;
 
-		/* If defragmentation is disabled, sleep before
-		checking whether it's enabled. */
-		if (!srv_defragment) {
-			os_thread_sleep(BTR_DEFRAGMENT_SLEEP_IN_USECS);
-			continue;
-		}
-		/* The following call won't remove the item from work queue.
-		We only get a pointer to it to work on. This will make sure
-		when user issue a kill command, all indices are in the work
-		queue to be searched. This also means that the user thread
-		cannot directly remove the item from queue (since we might be
-		using it). So user thread only marks index as removed. */
-		btr_defragment_item_t* item = btr_defragment_get_item();
-		/* If work queue is empty, sleep and check later. */
-		if (!item) {
-			os_thread_sleep(BTR_DEFRAGMENT_SLEEP_IN_USECS);
-			continue;
-		}
-		/* If an index is marked as removed, we remove it from the work
-		queue. No other thread could be using this item at this point so
-		it's safe to remove now. */
-		if (item->removed) {
-			btr_defragment_remove_item(item);
-			continue;
-		}
+    if (elapsed < srv_defragment_interval) {
+      /* If we see an index again before the interval
+      determined by the configured frequency is reached,
+      we just sleep until the interval pass. Since
+      defragmentation of all indices queue up on a single
+      thread, it's likely other indices that follow this one
+      don't need to sleep again. */
+      int sleep_ms = (int)((srv_defragment_interval - elapsed) / 1000 / 1000);
+      if (sleep_ms) {
+        btr_defragment_timer->set_time(sleep_ms, 0);
+        return;
+      }
+    }
+    mtr_start(&mtr);
+    cursor = btr_pcur_get_btr_cur(pcur);
+    index = btr_cur_get_index(cursor);
+    index->set_modified(mtr);
+    /* To follow the latching order defined in WL#6326, acquire index->lock X-latch.
+    This entitles us to acquire page latches in any order for the index. */
+    mtr_x_lock(&index->lock, &mtr);
+    /* This will acquire index->lock SX-latch, which per WL#6363 is allowed
+    when we are already holding the X-latch. */
+    btr_pcur_restore_position(BTR_MODIFY_TREE, pcur, &mtr);
+    first_block = btr_cur_get_block(cursor);
 
-		pcur = item->pcur;
-		ulonglong now = my_interval_timer();
-		ulonglong elapsed = now - item->last_processed;
+    last_block = btr_defragment_n_pages(first_block, index,
+      srv_defragment_n_pages,
+      &mtr);
+    if (last_block) {
+      /* If we haven't reached the end of the index,
+      place the cursor on the last record of last page,
+      store the cursor position, and put back in queue. */
+      page_t* last_page = buf_block_get_frame(last_block);
+      rec_t* rec = page_rec_get_prev(
+        page_get_supremum_rec(last_page));
+      ut_a(page_rec_is_user_rec(rec));
+      page_cur_position(rec, last_block,
+        btr_cur_get_page_cur(cursor));
+      btr_pcur_store_position(pcur, &mtr);
+      mtr_commit(&mtr);
+      /* Update the last_processed time of this index. */
+      item->last_processed = now;
+    }
+    else {
+      dberr_t err = DB_SUCCESS;
+      mtr_commit(&mtr);
+      /* Reaching the end of the index. */
+      dict_stats_empty_defrag_stats(index);
+      err = dict_stats_save_defrag_stats(index);
+      if (err != DB_SUCCESS) {
+        ib::error() << "Saving defragmentation stats for table "
+          << index->table->name
+          << " index " << index->name()
+          << " failed with error " << err;
+      }
+      else {
+        err = dict_stats_save_defrag_summary(index);
 
-		if (elapsed < srv_defragment_interval) {
-			/* If we see an index again before the interval
-			determined by the configured frequency is reached,
-			we just sleep until the interval pass. Since
-			defragmentation of all indices queue up on a single
-			thread, it's likely other indices that follow this one
-			don't need to sleep again. */
-			os_thread_sleep(static_cast<ulint>
-					((srv_defragment_interval - elapsed)
-					 / 1000));
-		}
-
-		now = my_interval_timer();
-		mtr_start(&mtr);
-		cursor = btr_pcur_get_btr_cur(pcur);
-		index = btr_cur_get_index(cursor);
-		index->set_modified(mtr);
-		/* To follow the latching order defined in WL#6326, acquire index->lock X-latch.
-		This entitles us to acquire page latches in any order for the index. */
-		mtr_x_lock(&index->lock, &mtr);
-		/* This will acquire index->lock SX-latch, which per WL#6363 is allowed
-		when we are already holding the X-latch. */
-		btr_pcur_restore_position(BTR_MODIFY_TREE, pcur, &mtr);
-		first_block = btr_cur_get_block(cursor);
-
-		last_block = btr_defragment_n_pages(first_block, index,
-						    srv_defragment_n_pages,
-						    &mtr);
-		if (last_block) {
-			/* If we haven't reached the end of the index,
-			place the cursor on the last record of last page,
-			store the cursor position, and put back in queue. */
-			page_t* last_page = buf_block_get_frame(last_block);
-			rec_t* rec = page_rec_get_prev(
-				page_get_supremum_rec(last_page));
-			ut_a(page_rec_is_user_rec(rec));
-			page_cur_position(rec, last_block,
-					  btr_cur_get_page_cur(cursor));
-			btr_pcur_store_position(pcur, &mtr);
-			mtr_commit(&mtr);
-			/* Update the last_processed time of this index. */
-			item->last_processed = now;
-		} else {
-			dberr_t err = DB_SUCCESS;
-			mtr_commit(&mtr);
-			/* Reaching the end of the index. */
-			dict_stats_empty_defrag_stats(index);
-			err = dict_stats_save_defrag_stats(index);
-			if (err != DB_SUCCESS) {
-				ib::error() << "Saving defragmentation stats for table "
-					    << index->table->name
-					    << " index " << index->name()
-					    << " failed with error " << err;
-			} else {
-				err = dict_stats_save_defrag_summary(index);
-
-				if (err != DB_SUCCESS) {
-					ib::error() << "Saving defragmentation summary for table "
-					    << index->table->name
-					    << " index " << index->name()
-					    << " failed with error " << err;
-				}
-			}
-
-			btr_defragment_remove_item(item);
-		}
-	}
-
-	btr_defragment_thread_active = false;
-	os_thread_exit();
-	OS_THREAD_DUMMY_RETURN;
+        if (err != DB_SUCCESS) {
+          ib::error() << "Saving defragmentation summary for table "
+            << index->table->name
+            << " index " << index->name()
+            << " failed with error " << err;
+        }
+      }
+      btr_defragment_remove_item(item);
+    }
+  }
 }
