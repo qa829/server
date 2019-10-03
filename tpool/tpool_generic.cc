@@ -275,7 +275,7 @@ public:
       if (m_pool)
       {
         std::unique_lock<std::mutex> lk(m_mtx);
-        if (m_on)
+        if (m_on && m_period)
         {
           m_queued = false;
           thr_timer_end(this);
@@ -289,19 +289,12 @@ public:
       auto timer = (timer_generic*)arg;
       timer->run();
     }
-    void submit()
-    {
-      std::unique_lock<std::mutex> lk(m_mtx);
-      if (!m_on || m_queued)
-        return;
-      m_pool->submit_task(&m_task);
-      m_queued = true;
-    }
 
     static void submit_task(void* arg)
     {
       timer_generic* timer = (timer_generic*)arg;
-      timer->submit();
+      timer->m_pool->submit_task(&timer->m_task);
+      timer->m_queued = true;
     }
 
   public:
