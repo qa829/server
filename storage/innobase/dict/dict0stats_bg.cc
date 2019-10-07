@@ -42,6 +42,7 @@ Created Apr 25, 2012 Vasil Dimov
 
 /** Minimum time interval between stats recalc for a given table */
 #define MIN_RECALC_INTERVAL	10 /* seconds */
+static void dict_stats_schedule(int ms);
 
 #ifdef UNIV_DEBUG
 /** Used by SET GLOBAL innodb_dict_stats_disabled_debug = 1; */
@@ -104,7 +105,9 @@ static
 void
 dict_stats_recalc_pool_add(
 /*=======================*/
-	const dict_table_t*	table)	/*!< in: table to add */
+	const dict_table_t*	table,	/*!< in: table to add */
+	bool schedule_dict_stats_task = true /*!< in: schedule dict stats task */
+)
 {
 	ut_ad(!srv_read_only_mode);
 
@@ -120,12 +123,12 @@ dict_stats_recalc_pool_add(
 			return;
 		}
 	}
-
 	recalc_pool.push_back(table->id);
-
+	if (recalc_pool.size() == 1 && schedule_dict_stats_task) {
+		dict_stats_schedule_now();
+	}
 	mutex_exit(&recalc_pool_mutex);
 
-	dict_stats_schedule_now();
 }
 
 #ifdef WITH_WSREP
@@ -328,9 +331,11 @@ dict_stats_deinit()
 
 /*****************************************************************//**
 Get the first table that has been added for auto recalc and eventually
-update its stats. */
+update its stats.
+@return : false if pool was empty, or first entry needs delay
+*/
 static
-void
+bool
 dict_stats_process_entry_from_recalc_pool()
 /*=======================================*/
 {
@@ -338,10 +343,11 @@ dict_stats_process_entry_from_recalc_pool()
 
 	ut_ad(!srv_read_only_mode);
 
+next_table_id:
 	/* pop the first table from the auto recalc pool */
 	if (!dict_stats_recalc_pool_get(&table_id)) {
 		/* no tables for auto recalc */
-		return;
+		return false;
 	}
 
 	dict_table_t*	table;
@@ -354,7 +360,7 @@ dict_stats_process_entry_from_recalc_pool()
 		/* table does not exist, must have been DROPped
 		after its id was enqueued */
 		mutex_exit(&dict_sys.mutex);
-		return;
+		goto next_table_id;
 	}
 
 	ut_ad(!table->is_temporary());
@@ -362,7 +368,7 @@ dict_stats_process_entry_from_recalc_pool()
 	if (!fil_table_accessible(table)) {
 		dict_table_close(table, TRUE, FALSE);
 		mutex_exit(&dict_sys.mutex);
-		return;
+		goto next_table_id;
 	}
 
 	table->stats_bg_flag |= BG_STAT_IN_PROGRESS;
@@ -375,7 +381,7 @@ dict_stats_process_entry_from_recalc_pool()
 	find out that this is a problem, then the check below could eventually
 	be replaced with something else, though a time interval is the natural
 	approach. */
-
+	int ret;
 	if (difftime(time(NULL), table->stats_last_recalc)
 	    < MIN_RECALC_INTERVAL) {
 
@@ -383,11 +389,13 @@ dict_stats_process_entry_from_recalc_pool()
 		too frequent stats updates we put back the table on
 		the auto recalc list and do nothing. */
 
-		dict_stats_recalc_pool_add(table);
-
+		dict_stats_recalc_pool_add(table, false);
+		dict_stats_schedule(MIN_RECALC_INTERVAL*1000);
+		ret = false;
 	} else {
 
 		dict_stats_update(table, DICT_STATS_RECALC_PERSISTENT);
+		ret = true;
 	}
 
 	mutex_enter(&dict_sys.mutex);
@@ -397,6 +405,7 @@ dict_stats_process_entry_from_recalc_pool()
 	dict_table_close(table, TRUE, FALSE);
 
 	mutex_exit(&dict_sys.mutex);
+	return ret;
 }
 
 #ifdef UNIV_DEBUG
@@ -421,7 +430,7 @@ std::mutex dict_stats_mutex;
 
 static void dict_stats_func(void*)
 {
-	dict_stats_process_entry_from_recalc_pool();
+	while (dict_stats_process_entry_from_recalc_pool()) {}
 	dict_defrag_process_entries_from_defrag_pool();
 }
 
@@ -433,16 +442,20 @@ void dict_stats_start()
 		return;
 	}
 	dict_stats_timer = srv_thread_pool->create_timer(dict_stats_func, 0, 0);
-	dict_stats_timer->set_time(0, 1000 * MIN_RECALC_INTERVAL);
 }
 
 
-void dict_stats_schedule_now()
+static void dict_stats_schedule(int ms)
 {
 	std::lock_guard<std::mutex> lk(dict_stats_mutex);
 	if(dict_stats_timer) {
-		dict_stats_timer->set_time(0, 1000 * MIN_RECALC_INTERVAL);
+		dict_stats_timer->set_time(ms,0);
 	}
+}
+
+void dict_stats_schedule_now()
+{
+	dict_stats_schedule(0);
 }
 
 /** Shut down the dict_stats_thread. */

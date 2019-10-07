@@ -133,10 +133,10 @@ dict_stats_defrag_pool_add(
 	item.table_id = index->table->id;
 	item.index_id = index->id;
 	defrag_pool.push_back(item);
-
+	if (defrag_pool.size() == 1) {
+		dict_stats_schedule_now();
+	}
 	mutex_exit(&defrag_pool_mutex);
-
-	dict_stats_schedule_now();
 }
 
 /*****************************************************************//**
