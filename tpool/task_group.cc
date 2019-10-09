@@ -25,7 +25,7 @@ namespace tpool
     m_queue(8),
     m_mtx(),
     m_tasks_running(),
-    m_max_concurrent_tasks(10000)
+    m_max_concurrent_tasks(max_concurrency)
   {};
 
   void task_group::set_max_tasks(unsigned int max_concurrency)
