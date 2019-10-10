@@ -2623,6 +2623,10 @@ fts_optimize_remove_table(
 		return;
 	}
 
+	/* Going to wait for own completion, make sure to not hold
+	the locks used by fts_optimize_callback.*/
+	ut_ad(!mutex_own(&dict_sys.mutex));
+
 	msg = fts_optimize_create_msg(FTS_MSG_DEL_TABLE, NULL);
 
 	/* We will wait on this event until signalled by the consumer. */
