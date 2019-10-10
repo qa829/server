@@ -340,7 +340,6 @@ PSI_statement_info stmt_info_rpl;
 
 /* the default log output is log tables */
 static bool lower_case_table_names_used= 0;
-static bool max_long_data_size_used= false;
 static bool volatile select_thread_in_use, signal_thread_in_use;
 static my_bool opt_debugging= 0, opt_external_locking= 0, opt_console= 0;
 static my_bool opt_short_log_format= 0, opt_silent_startup= 0;
@@ -511,12 +510,6 @@ my_decimal decimal_zero;
 long opt_secure_timestamp;
 uint default_password_lifetime;
 my_bool disconnect_on_expired_password;
-
-/*
-  Maximum length of parameter value which can be set through
-  mysql_send_long_data() call.
-*/
-ulong max_long_data_size;
 
 bool max_user_connections_checking=0;
 /**
@@ -1138,12 +1131,9 @@ PSI_statement_info stmt_info_new_packet;
 #endif
 
 #ifndef EMBEDDED_LIBRARY
-void net_before_header_psi(struct st_net *net, void *user_data, size_t /* unused: count */)
+void net_before_header_psi(struct st_net *net, void *thd, size_t /* unused: count */)
 {
-  THD *thd;
-  thd= static_cast<THD*> (user_data);
-  DBUG_ASSERT(thd != NULL);
-
+  DBUG_ASSERT(thd);
   /*
     We only come where when the server is IDLE, waiting for the next command.
     Technically, it is a wait on a socket, which may take a long time,
@@ -1152,7 +1142,8 @@ void net_before_header_psi(struct st_net *net, void *user_data, size_t /* unused
     Instead, start explicitly an IDLE event.
   */
   MYSQL_SOCKET_SET_STATE(net->vio->mysql_socket, PSI_SOCKET_STATE_IDLE);
-  MYSQL_START_IDLE_WAIT(thd->m_idle_psi, &thd->m_idle_state);
+  MYSQL_START_IDLE_WAIT(static_cast<THD*>(thd)->m_idle_psi,
+                        &static_cast<THD*>(thd)->m_idle_state);
 }
 
 void net_after_header_psi(struct st_net *net, void *user_data,
@@ -8331,9 +8322,6 @@ mysqld_get_one_option(int optid, const struct my_option *opt, char *argument)
   case OPT_PLUGIN_LOAD_ADD:
     opt_plugin_load_list_ptr->push_back(new i_string(argument));
     break;
-  case OPT_MAX_LONG_DATA_SIZE:
-    max_long_data_size_used= true;
-    break;
   case OPT_PFS_INSTRUMENT:
   {
 #ifdef WITH_PERFSCHEMA_STORAGE_ENGINE
@@ -8748,14 +8736,6 @@ static int get_options(int *argc_ptr, char ***argv_ptr)
 #endif
 
   opt_readonly= read_only;
-
-  /*
-    If max_long_data_size is not specified explicitly use
-    value of max_allowed_packet.
-  */
-  if (!max_long_data_size_used)
-    SYSVAR_AUTOSIZE(max_long_data_size,
-                    global_system_variables.max_allowed_packet);
 
   /* Remember if max_user_connections was 0 at startup */
   max_user_connections_checking= global_system_variables.max_user_connections != 0;

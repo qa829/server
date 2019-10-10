@@ -64,7 +64,7 @@ inline bool Field::marked_for_read() const
          (!table->read_set ||
           bitmap_is_set(table->read_set, field_index) ||
           (!(ptr >= table->record[0] &&
-          ptr < table->record[0] + table->s->reclength)));
+             ptr < table->record[0] + table->s->reclength)));
 }
 
 /*
@@ -75,7 +75,7 @@ inline bool Field::marked_for_read() const
 
 inline bool Field::marked_for_write_or_computed() const
 {
-  return (is_stat_field || !table ||
+  return (!table ||
           (!table->write_set ||
            bitmap_is_set(table->write_set, field_index) ||
            (!(ptr >= table->record[0] &&
@@ -1786,8 +1786,7 @@ Field::Field(uchar *ptr_arg,uint32 length_arg,uchar *null_ptr_arg,
   flags=null_ptr ? 0: NOT_NULL_FLAG;
   comment.str= (char*) "";
   comment.length=0;
-  field_index= 0;   
-  is_stat_field= FALSE;
+  field_index= 0;
   cond_selectivity= 1.0;
   next_equal_field= NULL;
 }
@@ -2439,30 +2438,18 @@ Field *Field::clone(MEM_ROOT *root, TABLE *new_table)
 }
 
 
-
-Field *Field::clone(MEM_ROOT *root, TABLE *new_table, my_ptrdiff_t diff,
-                    bool stat_flag)
+Field *Field::clone(MEM_ROOT *root, TABLE *new_table, my_ptrdiff_t diff)
 {
   Field *tmp;
   if ((tmp= (Field*) memdup_root(root,(char*) this,size_of())))
   {
-    tmp->init(new_table);
-    tmp->move_field_offset(diff);
-  }
-  tmp->is_stat_field= stat_flag;
-  return tmp;
-}
-
-
-Field *Field::clone(MEM_ROOT *root, my_ptrdiff_t diff)
-{
-  Field *tmp;
-  if ((tmp= (Field*) memdup_root(root,(char*) this,size_of())))
-  {
+    if (new_table)
+      tmp->init(new_table);
     tmp->move_field_offset(diff);
   }
   return tmp;
 }
+
 
 int Field::set_default()
 {
@@ -2896,7 +2883,7 @@ int Field_decimal::store(const char *from_arg, size_t len, CHARSET_INFO *cs)
   
   /*
     Write digits of the frac_% parts ;
-    Depending on get_thd()->count_cutted_fields, we may also want
+    Depending on get_thd()->count_cuted_fields, we may also want
     to know if some non-zero tail of these parts will
     be truncated (for example, 0.002->0.00 will generate a warning,
     while 0.000->0.00 will not)
@@ -3650,6 +3637,17 @@ int Field_int::store_time_dec(const MYSQL_TIME *ltime, uint dec_arg)
 }
 
 
+void Field_int::sql_type(String &res) const
+{
+  CHARSET_INFO *cs=res.charset();
+  Name name= type_handler()->type_handler_signed()->name();
+  res.length(cs->cset->snprintf(cs,(char*) res.ptr(),res.alloced_length(),
+			  "%.*s(%d)", (int) name.length(), name.ptr(),
+			  (int) field_length));
+  add_zerofill_and_unsigned(res);
+}
+
+
 /****************************************************************************
 ** tiny int
 ****************************************************************************/
@@ -3800,14 +3798,6 @@ void Field_tiny::sort_string(uchar *to,uint length __attribute__((unused)))
     *to= *ptr;
   else
     to[0] = (char) (ptr[0] ^ (uchar) 128);	/* Revers signbit */
-}
-
-void Field_tiny::sql_type(String &res) const
-{
-  CHARSET_INFO *cs=res.charset();
-  res.length(cs->cset->snprintf(cs,(char*) res.ptr(),res.alloced_length(),
-			  "tinyint(%d)",(int) field_length));
-  add_zerofill_and_unsigned(res);
 }
 
 /****************************************************************************
@@ -3974,15 +3964,6 @@ void Field_short::sort_string(uchar *to,uint length __attribute__((unused)))
     to[0] = (char) (ptr[1] ^ 128);              /* Revers signbit */
   to[1]   = ptr[0];
 }
-
-void Field_short::sql_type(String &res) const
-{
-  CHARSET_INFO *cs=res.charset();
-  res.length(cs->cset->snprintf(cs,(char*) res.ptr(),res.alloced_length(),
-			  "smallint(%d)",(int) field_length));
-  add_zerofill_and_unsigned(res);
-}
-
 
 /****************************************************************************
   Field type medium int (3 byte)
@@ -4174,14 +4155,6 @@ void Field_medium::sort_string(uchar *to,uint length __attribute__((unused)))
 }
 
 
-void Field_medium::sql_type(String &res) const
-{
-  CHARSET_INFO *cs=res.charset();
-  res.length(cs->cset->snprintf(cs,(char*) res.ptr(),res.alloced_length(), 
-			  "mediumint(%d)",(int) field_length));
-  add_zerofill_and_unsigned(res);
-}
-
 /****************************************************************************
 ** long int
 ****************************************************************************/
@@ -4347,14 +4320,6 @@ void Field_long::sort_string(uchar *to,uint length __attribute__((unused)))
 }
 
 
-void Field_long::sql_type(String &res) const
-{
-  CHARSET_INFO *cs=res.charset();
-  res.length(cs->cset->snprintf(cs,(char*) res.ptr(),res.alloced_length(),
-			  "int(%d)",(int) field_length));
-  add_zerofill_and_unsigned(res);
-}
-
 /****************************************************************************
  Field type longlong int (8 bytes)
 ****************************************************************************/
@@ -4497,14 +4462,6 @@ void Field_longlong::sort_string(uchar *to,uint length __attribute__((unused)))
   to[7]   = ptr[0];
 }
 
-
-void Field_longlong::sql_type(String &res) const
-{
-  CHARSET_INFO *cs=res.charset();
-  res.length(cs->cset->snprintf(cs,(char*) res.ptr(),res.alloced_length(),
-			  "bigint(%d)",(int) field_length));
-  add_zerofill_and_unsigned(res);
-}
 
 void Field_longlong::set_max()
 {
@@ -4673,22 +4630,6 @@ Binlog_type_info Field_float::binlog_type_info() const
   DBUG_ASSERT(Field_float::type() == binlog_type());
   return Binlog_type_info(Field_float::type(), pack_length(), 1,
                           binlog_signedness());
-}
-
-
-void Field_float::sql_type(String &res) const
-{
-  if (dec >= FLOATING_POINT_DECIMALS)
-  {
-    res.set_ascii(STRING_WITH_LEN("float"));
-  }
-  else
-  {
-    CHARSET_INFO *cs= res.charset();
-    res.length(cs->cset->snprintf(cs,(char*) res.ptr(),res.alloced_length(),
-			    "float(%d,%d)",(int) field_length,dec));
-  }
-  add_zerofill_and_unsigned(res);
 }
 
 
@@ -4913,6 +4854,24 @@ Item *Field_real::get_equal_const_item(THD *thd, const Context &ctx,
 }
 
 
+void Field_real::sql_type(String &res) const
+{
+  const Name name= type_handler()->name();
+  if (dec >= FLOATING_POINT_DECIMALS)
+  {
+    res.set_ascii(name.ptr(), name.length());
+  }
+  else
+  {
+    CHARSET_INFO *cs= res.charset();
+    res.length(cs->cset->snprintf(cs,(char*) res.ptr(),res.alloced_length(),
+			    "%.*s(%d,%d)", (int) name.length(), name.ptr(),
+			    (int) field_length,dec));
+  }
+  add_zerofill_and_unsigned(res);
+}
+
+
 String *Field_double::val_str(String *val_buffer,
 			      String *val_ptr __attribute__((unused)))
 {
@@ -4985,22 +4944,6 @@ Binlog_type_info Field_double::binlog_type_info() const
   DBUG_ASSERT(Field_double::type() == binlog_type());
   return Binlog_type_info(Field_double::type(), pack_length(), 1,
                           binlog_signedness());
-}
-
-
-void Field_double::sql_type(String &res) const
-{
-  CHARSET_INFO *cs=res.charset();
-  if (dec >= FLOATING_POINT_DECIMALS)
-  {
-    res.set_ascii(STRING_WITH_LEN("double"));
-  }
-  else
-  {
-    res.length(cs->cset->snprintf(cs,(char*) res.ptr(),res.alloced_length(),
-			    "double(%d,%d)",(int) field_length,dec));
-  }
-  add_zerofill_and_unsigned(res);
 }
 
 
@@ -7040,7 +6983,8 @@ Field_longstr::check_string_copy_error(const String_copier *copier,
   if (likely(!(pos= copier->most_important_error_pos())))
     return FALSE;
 
-  if (!is_stat_field)
+  /* Ignore errors from internal expressions */
+  if (get_thd()->count_cuted_fields > CHECK_FIELD_EXPRESSION)
   {
     DBUG_ASSERT(sizeof(tmp) >= convert_to_printable_required_length(6));
     convert_to_printable(tmp, sizeof(tmp), pos, (end - pos), cs, 6);
@@ -7074,8 +7018,9 @@ int
 Field_longstr::report_if_important_data(const char *pstr, const char *end,
                                         bool count_spaces)
 {
-  THD *thd= get_thd();
-  if ((pstr < end) && thd->count_cuted_fields > CHECK_FIELD_EXPRESSION)
+  THD *thd;
+  if ((pstr < end) &&
+      (thd= get_thd())->count_cuted_fields > CHECK_FIELD_EXPRESSION)
   {
     if (test_if_important_data(field_charset(), pstr, end))
     {
@@ -7086,7 +7031,8 @@ Field_longstr::report_if_important_data(const char *pstr, const char *end,
       return 2;
     }
     else if (count_spaces)
-    { /* If we lost only spaces then produce a NOTE, not a WARNING */
+    {
+      /* If we lost only spaces then produce a NOTE, not a WARNING */
       set_note(WARN_DATA_TRUNCATED, 1);
       return 2;
     }
@@ -7579,16 +7525,25 @@ Field_string::unpack(uchar *to, const uchar *from, const uchar *from_end,
 
    @returns number of bytes written to metadata_ptr
 */
+
+Binlog_type_info_fixed_string::Binlog_type_info_fixed_string(uchar type_code,
+                                                             uint32 octets,
+                                                             CHARSET_INFO *cs)
+ :Binlog_type_info(type_code, 0, 2, cs)
+{
+  DBUG_ASSERT(octets < 1024);
+  DBUG_ASSERT((type_code & 0xF0) == 0xF0);
+  DBUG_PRINT("debug", ("octets: %u, type_code: %u", octets, type_code));
+  m_metadata= (type_code ^ ((octets & 0x300) >> 4)) +
+              (((uint)(octets & 0xFF)) << 8);
+}
+
+
 Binlog_type_info Field_string::binlog_type_info() const
 {
-  uint16 a;
-  DBUG_ASSERT(field_length < 1024);
-  DBUG_ASSERT((real_type() & 0xF0) == 0xF0);
-  DBUG_PRINT("debug", ("field_length: %u, real_type: %u",
-                     field_length, real_type()));
-  a= (real_type() ^ ((field_length & 0x300) >> 4)) + (((uint)(field_length & 0xFF)) << 8);
   DBUG_ASSERT(Field_string::type() == binlog_type());
-  return Binlog_type_info(Field_string::type(), a, 2, charset());
+  return Binlog_type_info_fixed_string(Field_string::binlog_type(),
+                                       field_length, charset());
 }
 
 
@@ -10215,13 +10170,11 @@ void Column_definition::create_length_to_internal_length_bit()
 {
   if (f_bit_as_char(pack_flag))
   {
-    key_length= pack_length= ((length + 7) & ~7) / 8;
+    pack_length= ((length + 7) & ~7) / 8;
   }
   else
   {
     pack_length= (uint) length / 8;
-    /* We need one extra byte to store the bits we save among the null bits */
-    key_length= pack_length + MY_TEST(length & 7);
   }
 }
 
@@ -10230,7 +10183,7 @@ void Column_definition::create_length_to_internal_length_newdecimal()
 {
   DBUG_ASSERT(length < UINT_MAX32);
   uint prec= get_decimal_precision((uint)length, decimals, flags & UNSIGNED_FLAG);
-  key_length= pack_length= my_decimal_get_binary_size(prec, decimals);
+  pack_length= my_decimal_get_binary_size(prec, decimals);
 }
 
 
@@ -10359,6 +10312,7 @@ bool Column_definition::fix_attributes_temporal_with_time(uint int_part_length)
              MAX_DATETIME_PRECISION);
     return true;
   }
+  decimals= (uint) length;
   length+= int_part_length + (length ? 1 : 0);
   return false;
 }
@@ -10564,11 +10518,24 @@ bool Field_vers_trx_id::test_if_equality_guarantees_uniqueness(const Item* item)
 
 Column_definition_attributes::Column_definition_attributes(const Field *field)
  :length(field->character_octet_length() / field->charset()->mbmaxlen),
+  decimals(field->decimals()),
   unireg_check(field->unireg_check),
   interval(NULL),
   charset(field->charset()), // May be NULL ptr
   srid(0),
   pack_flag(0)
+{}
+
+
+Column_definition_attributes::
+  Column_definition_attributes(const Type_all_attributes &attr)
+ :length(attr.max_length),
+  decimals(attr.decimals),
+  unireg_check(Field::NONE),
+  interval(attr.get_typelib()),
+  charset(attr.collation.collation),
+  srid(0),
+  pack_flag(attr.unsigned_flag ? 0 : FIELDFLAG_DECIMAL)
 {}
 
 
@@ -10582,10 +10549,8 @@ Column_definition::Column_definition(THD *thd, Field *old_field,
   field_name= old_field->field_name;
   flags=      old_field->flags;
   pack_length=old_field->pack_length();
-  key_length= old_field->key_length();
   set_handler(old_field->type_handler());
   comment=    old_field->comment;
-  decimals=   old_field->decimals();
   vcol_info=  old_field->vcol_info;
   option_list= old_field->option_list;
   compression_method_ptr= 0;
@@ -10667,7 +10632,6 @@ Column_definition::redefine_stage1_common(const Column_definition *dup_field,
                                       schema->default_table_charset;
   length=       dup_field->char_length;
   pack_length=  dup_field->pack_length;
-  key_length=   dup_field->key_length;
   decimals=     dup_field->decimals;
   unireg_check= dup_field->unireg_check;
   flags=        dup_field->flags;
@@ -10938,13 +10902,17 @@ void Field::set_warning_truncated_wrong_value(const char *type_arg,
                                               const char *value)
 {
   THD *thd= get_thd();
-  const char *db_name= table->s->db.str;
-  const char *table_name= table->s->table_name.str;
+  const char *db_name;
+  const char *table_name;
+  /*
+    table has in the past been 0 in case of wrong calls when processing
+    statistics tables. Let's protect against that.
+  */
+  DBUG_ASSERT(table);
 
-  if (!db_name)
-    db_name= "";
-  if (!table_name)
-    table_name= "";
+  db_name= (table && table->s->db.str) ? table->s->db.str : "";
+  table_name= (table && table->s->table_name.str) ?
+              table->s->table_name.str : "";
 
   push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
                       ER_TRUNCATED_WRONG_VALUE_FOR_FIELD,

@@ -766,6 +766,7 @@ typedef struct system_variables
   ulong session_track_transaction_info;
   my_bool session_track_schema;
   my_bool session_track_state_change;
+  my_bool session_track_user_variables;
   my_bool tcp_nodelay;
 
   ulong threadpool_priority;
@@ -4685,9 +4686,7 @@ private:
   AUTHID invoker;
 
 public:
-#ifndef EMBEDDED_LIBRARY
   Session_tracker session_tracker;
-#endif //EMBEDDED_LIBRARY
   /*
     Flag, mutex and condition for a thread to wait for a signal from another
     thread.
@@ -6321,7 +6320,7 @@ class user_var_entry
 
   double val_real(bool *null_value);
   longlong val_int(bool *null_value) const;
-  String *val_str(bool *null_value, String *str, uint decimals);
+  String *val_str(bool *null_value, String *str, uint decimals) const;
   my_decimal *val_decimal(bool *null_value, my_decimal *result);
   CHARSET_INFO *charset() const { return m_charset; }
   void set_charset(CHARSET_INFO *cs) { m_charset= cs; }
@@ -7096,11 +7095,12 @@ void dbug_serve_apcs(THD *thd, int n_calls);
 class ScopedStatementReplication
 {
 public:
-  ScopedStatementReplication(THD *thd) : thd(thd)
-  {
-    if (thd)
-      saved_binlog_format= thd->set_current_stmt_binlog_format_stmt();
-  }
+  ScopedStatementReplication(THD *thd) :
+    saved_binlog_format(thd
+                        ? thd->set_current_stmt_binlog_format_stmt()
+                        : BINLOG_FORMAT_MIXED),
+    thd(thd)
+  {}
   ~ScopedStatementReplication()
   {
     if (thd)
@@ -7108,8 +7108,8 @@ public:
   }
 
 private:
-  enum_binlog_format saved_binlog_format;
-  THD *thd;
+  const enum_binlog_format saved_binlog_format;
+  THD *const thd;
 };
 
 

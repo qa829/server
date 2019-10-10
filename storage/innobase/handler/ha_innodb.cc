@@ -6733,7 +6733,7 @@ get_innobase_type_from_mysql_type(
 		}
 	case MYSQL_TYPE_BIT:
 	case MYSQL_TYPE_STRING:
-		if (field->binary()) {
+		if (field->binary() || field->key_type() == HA_KEYTYPE_BINARY) {
 			return(DATA_FIXBINARY);
 		} else if (field->charset() == &my_charset_latin1) {
 			return(DATA_CHAR);
@@ -9769,10 +9769,10 @@ ha_innobase::ft_init_ext(
 		return(NULL);
 	}
 
-	if (!(ft_table->fts->fts_status & ADDED_TABLE_SYNCED)) {
+	if (!(ft_table->fts->added_synced)) {
 		fts_init_index(ft_table, FALSE);
 
-		ft_table->fts->fts_status |= ADDED_TABLE_SYNCED;
+		ft_table->fts->added_synced = true;
 	}
 
 	const byte*	q = reinterpret_cast<const byte*>(
@@ -12301,7 +12301,7 @@ int create_table_info_t::create_table(bool create_fk)
 						 DICT_ERR_IGNORE_NONE,
 						 fk_tables);
 			while (err == DB_SUCCESS && !fk_tables.empty()) {
-				dict_load_table(fk_tables.front(), true,
+				dict_load_table(fk_tables.front(),
 						DICT_ERR_IGNORE_NONE);
 				fk_tables.pop_front();
 			}

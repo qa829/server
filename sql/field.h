@@ -719,6 +719,16 @@ public:
   { return alloc_root(mem_root, size); }
 };
 
+
+class Binlog_type_info_fixed_string: public Binlog_type_info
+{
+public:
+  Binlog_type_info_fixed_string(uchar type_code,
+                                uint32 octet_length,
+                                CHARSET_INFO *cs);
+};
+
+
 class Field: public Value_source
 {
   Field(const Item &);				/* Prevent use of these */
@@ -732,6 +742,7 @@ protected:
   }
   void error_generated_column_function_is_not_allowed(THD *thd, bool error)
                                                       const;
+  static void do_field_eq(Copy_field *copy);
   static void do_field_int(Copy_field *copy);
   static void do_field_real(Copy_field *copy);
   static void do_field_string(Copy_field *copy);
@@ -827,9 +838,6 @@ public:
    */
   bool is_created_from_null_item;
 
-  /* TRUE in Field objects created for column min/max values */
-  bool is_stat_field; 
-
   /* 
     Selectivity of the range condition over this field.
     When calculating this selectivity a range predicate
@@ -886,6 +894,10 @@ public:
   */
   typedef void Copy_func(Copy_field*);
   virtual Copy_func *get_copy_func(const Field *from) const= 0;
+  virtual Copy_func *get_copy_func_to(const Field *to) const
+  {
+    return to->get_copy_func(this);
+  }
   /* Store functions returns 1 on overflow and -1 on fatal error */
   virtual int  store_field(Field *from) { return from->save_in_field(this); }
   virtual int  save_in_field(Field *to)= 0;
@@ -1396,9 +1408,7 @@ public:
     return create_tmp_field(root, new_table, maybe_null());
   }
   Field *clone(MEM_ROOT *mem_root, TABLE *new_table);
-  Field *clone(MEM_ROOT *mem_root, TABLE *new_table, my_ptrdiff_t diff,
-               bool stat_flag= FALSE);
-  Field *clone(MEM_ROOT *mem_root, my_ptrdiff_t diff);
+  Field *clone(MEM_ROOT *mem_root, TABLE *new_table, my_ptrdiff_t diff);
   inline void move_field(uchar *ptr_arg,uchar *null_ptr_arg,uchar null_bit_arg)
   {
     ptr=ptr_arg; null_ptr=null_ptr_arg; null_bit=null_bit_arg;
@@ -2141,6 +2151,7 @@ public:
                   Information_schema_numeric_attributes(field_length) :
                   Information_schema_numeric_attributes(field_length, dec);
   }
+  void sql_type(String &str) const override;
   int save_in_field(Field *to) override { return to->store(val_real()); }
   bool memcpy_field_possible(const Field *from) const override
   {
@@ -2377,6 +2388,7 @@ public:
     uint32 prec= type_limits_int()->precision();
     return Information_schema_numeric_attributes(prec, 0);
   }
+  void sql_type(String &str) const override;
   SEL_ARG *get_mm_leaf(RANGE_OPT_PARAM *param, KEY_PART *key_part,
                        const Item_bool_func *cond,
                        scalar_comparison_op op, Item *value) override
@@ -2415,7 +2427,6 @@ public:
   int cmp(const uchar *,const uchar *) const override;
   void sort_string(uchar *buff,uint length) override;
   uint32 pack_length() const override { return 1; }
-  void sql_type(String &str) const override;
   const Type_limits_int *type_limits_int() const override
   {
     return type_handler_priv()->type_limits_int();
@@ -2477,7 +2488,6 @@ public:
   int cmp(const uchar *,const uchar *) const override;
   void sort_string(uchar *buff,uint length) override;
   uint32 pack_length() const override { return 2; }
-  void sql_type(String &str) const override;
   const Type_limits_int *type_limits_int() const override
   {
     return type_handler_priv()->type_limits_int();
@@ -2523,7 +2533,6 @@ public:
   int cmp(const uchar *,const uchar *) const override;
   void sort_string(uchar *buff,uint length) override;
   uint32 pack_length() const override { return 3; }
-  void sql_type(String &str) const override;
   const Type_limits_int *type_limits_int() const override
   {
     return type_handler_priv()->type_limits_int();
@@ -2574,7 +2583,6 @@ public:
   int cmp(const uchar *,const uchar *) const override;
   void sort_string(uchar *buff,uint length) override;
   uint32 pack_length() const override { return 4; }
-  void sql_type(String &str) const override;
   const Type_limits_int *type_limits_int() const override
   {
     return type_handler_priv()->type_limits_int();
@@ -2634,7 +2642,6 @@ public:
   int cmp(const uchar *,const uchar *) const override;
   void sort_string(uchar *buff,uint length) override;
   uint32 pack_length() const override { return 8; }
-  void sql_type(String &str) const override;
   const Type_limits_int *type_limits_int() const override
   {
     return type_handler_priv()->type_limits_int();
@@ -2736,7 +2743,6 @@ public:
   void sort_string(uchar *buff, uint length) override;
   uint32 pack_length() const override { return sizeof(float); }
   uint row_pack_length() const override { return pack_length(); }
-  void sql_type(String &str) const override;
   ulonglong get_max_int_value() const override
   {
     /*
@@ -2801,7 +2807,6 @@ public:
   void sort_string(uchar *buff, uint length) override;
   uint32 pack_length() const override { return sizeof(double); }
   uint row_pack_length() const override { return pack_length(); }
-  void sql_type(String &str) const override;
   ulonglong get_max_int_value() const override
   {
     /*
@@ -4795,6 +4800,7 @@ public:
     max number of characters.
   */
   ulonglong length;
+  uint decimals;
   Field::utype unireg_check;
   const TYPELIB *interval;            // Which interval to use
   CHARSET_INFO *charset;
@@ -4802,6 +4808,7 @@ public:
   uint pack_flag;
   Column_definition_attributes()
    :length(0),
+    decimals(0),
     unireg_check(Field::NONE),
     interval(NULL),
     charset(&my_charset_bin),
@@ -4809,6 +4816,7 @@ public:
     pack_flag(0)
   { }
   Column_definition_attributes(const Field *field);
+  Column_definition_attributes(const Type_all_attributes &attr);
   Field *make_field(TABLE_SHARE *share, MEM_ROOT *mem_root,
                     const Record_addr *rec,
                     const Type_handler *handler,
@@ -4821,8 +4829,12 @@ public:
   uint pack_flag_to_pack_length() const;
   void frm_pack_basic(uchar *buff) const;
   void frm_pack_charset(uchar *buff) const;
+  void frm_pack_numeric_with_dec(uchar *buff) const;
   void frm_unpack_basic(const uchar *buff);
   bool frm_unpack_charset(TABLE_SHARE *share, const uchar *buff);
+  bool frm_unpack_numeric_with_dec(TABLE_SHARE *share, const uchar *buff);
+  bool frm_unpack_temporal_with_dec(TABLE_SHARE *share, uint intlen,
+                                    const uchar *buff);
 };
 
 
@@ -4892,7 +4904,7 @@ public:
     for most of the types, or of bytes for BLOBs or numeric types.
   */
   uint32 char_length;
-  uint  decimals, flags, pack_length, key_length;
+  uint  flags, pack_length;
   List<String> interval_list;
   engine_option_value *option_list;
 
@@ -4915,8 +4927,8 @@ public:
    :Type_handler_hybrid_field_type(&type_handler_null),
     compression_method_ptr(0),
     comment(null_clex_str),
-    on_update(NULL), invisible(VISIBLE), char_length(0), decimals(0),
-    flags(0), pack_length(0), key_length(0),
+    on_update(NULL), invisible(VISIBLE), char_length(0),
+    flags(0), pack_length(0),
     option_list(NULL),
     vcol_info(0), default_value(0), check_constraint(0),
     versioning(VERSIONING_NOT_SET), period(NULL)
@@ -4929,11 +4941,11 @@ public:
   void create_length_to_internal_length_null()
   {
     DBUG_ASSERT(length == 0);
-    key_length= pack_length= 0;
+    pack_length= 0;
   }
   void create_length_to_internal_length_simple()
   {
-    key_length= pack_length= type_handler()->calc_pack_length((uint32) length);
+    pack_length= type_handler()->calc_pack_length((uint32) length);
   }
   void create_length_to_internal_length_string()
   {
@@ -4941,14 +4953,12 @@ public:
     if (real_field_type() == MYSQL_TYPE_VARCHAR && compression_method())
       length++;
     set_if_smaller(length, UINT_MAX32);
-    key_length= (uint) length;
     pack_length= type_handler()->calc_pack_length((uint32) length);
   }
   void create_length_to_internal_length_typelib()
   {
     /* Pack_length already calculated in sql_parse.cc */
     length*= charset->mbmaxlen;
-    key_length= pack_length;
   }
   bool vers_sys_field() const
   {
@@ -5016,7 +5026,7 @@ public:
   bool prepare_stage2_varchar(ulonglong table_flags);
   bool prepare_stage2_typelib(const char *type_name, uint field_flags,
                               uint *dup_val_count);
-  uint pack_flag_numeric(uint dec) const;
+  uint pack_flag_numeric() const;
   uint sign_length() const { return flags & UNSIGNED_FLAG ? 0 : 1; }
   bool check_length(uint mysql_errno, uint max_allowed_length) const;
   bool fix_attributes_real(uint default_length);
@@ -5078,7 +5088,6 @@ public:
     decimals= other.decimals;
     flags= other.flags;
     pack_length= other.pack_length;
-    key_length= other.key_length;
     unireg_check= other.unireg_check;
     interval= other.interval;
     charset= other.charset;
@@ -5478,6 +5487,8 @@ bool check_expression(Virtual_column_info *vcol, const LEX_CSTRING *name,
 #define FIELDFLAG_PACK_SHIFT		3
 #define FIELDFLAG_DEC_SHIFT		8
 #define FIELDFLAG_MAX_DEC               63U
+
+#define FIELDFLAG_DEC_MASK              0x3F00U
 
 #define MTYP_TYPENR(type) ((type) & 127U) // Remove bits from type
 

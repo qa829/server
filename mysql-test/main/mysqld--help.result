@@ -40,7 +40,7 @@ The following specify which files/extra groups are read (specified before remain
  --big-tables        Old variable, which if set to 1, allows large result sets
  by saving all temporary sets to disk, avoiding 'table
  full' errors. No longer needed, as the server now handles
- this automatically. sql_big_tables is a synonym.
+ this automatically.
  --bind-address=name IP address to bind to.
  --binlog-annotate-row-events 
  Tells the master to annotate RBR events with the
@@ -567,10 +567,6 @@ The following specify which files/extra groups are read (specified before remain
  max_join_size records return an error
  --max-length-for-sort-data=# 
  Max number of bytes in sorted records
- --max-long-data-size=# 
- The maximum BLOB length to send to server from
- mysql_send_long_data API. Deprecated option; use
- max_allowed_packet instead.
  --max-password-errors=# 
  If there is more than this number of failed connect
  attempts due to invalid password, user will be blocked
@@ -1117,6 +1113,8 @@ The following specify which files/extra groups are read (specified before remain
  characteristics (isolation level, read only/read
  write,snapshot - but not any work done / data modified
  within the transaction).
+ --session-track-user-variables 
+ Track changes to user variables.
  --show-slave-auth-info 
  Show user and password in SHOW SLAVE HOSTS on this
  master.
@@ -1569,7 +1567,6 @@ max-error-count 64
 max-heap-table-size 16777216
 max-join-size 18446744073709551615
 max-length-for-sort-data 1024
-max-long-data-size 16777216
 max-password-errors 18446744073709551615
 max-prepared-stmt-count 16382
 max-recursive-iterations 18446744073709551615
@@ -1712,6 +1709,7 @@ session-track-schema TRUE
 session-track-state-change FALSE
 session-track-system-variables autocommit,character_set_client,character_set_connection,character_set_results,time_zone
 session-track-transaction-info OFF
+session-track-user-variables FALSE
 show-slave-auth-info FALSE
 silent-startup FALSE
 skip-grant-tables TRUE

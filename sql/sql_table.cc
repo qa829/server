@@ -2920,12 +2920,11 @@ bool Column_definition::prepare_stage2_typelib(const char *type_name,
 }
 
 
-uint Column_definition::pack_flag_numeric(uint dec) const
+uint Column_definition::pack_flag_numeric() const
 {
   return (FIELDFLAG_NUMBER |
           (flags & UNSIGNED_FLAG ? 0 : FIELDFLAG_DECIMAL)  |
-          (flags & ZEROFILL_FLAG ? FIELDFLAG_ZEROFILL : 0) |
-          (dec << FIELDFLAG_DEC_SHIFT));
+          (flags & ZEROFILL_FLAG ? FIELDFLAG_ZEROFILL : 0));
 }
 
 
@@ -4054,7 +4053,8 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
       key_part_info->fieldnr= field;
       key_part_info->offset=  (uint16) sql_field->offset;
       key_part_info->key_type=sql_field->pack_flag;
-      uint key_part_length= sql_field->key_length;
+      uint key_part_length= sql_field->type_handler()->
+                              calc_key_length(*sql_field);
 
       if (column->length)
       {
@@ -4147,19 +4147,14 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
       /* Use packed keys for long strings on the first column */
       if (!((*db_options) & HA_OPTION_NO_PACK_KEYS) &&
           !((create_info->table_options & HA_OPTION_NO_PACK_KEYS)) &&
-	  (key_part_length >= KEY_DEFAULT_PACK_LENGTH &&
-	   (sql_field->real_field_type() == MYSQL_TYPE_STRING ||
-	    sql_field->real_field_type() == MYSQL_TYPE_VARCHAR ||
-	    sql_field->pack_flag & FIELDFLAG_BLOB))&& !is_hash_field_needed)
+          (key_part_length >= KEY_DEFAULT_PACK_LENGTH) &&
+          !is_hash_field_needed)
       {
-	if ((column_nr == 0 && (sql_field->pack_flag & FIELDFLAG_BLOB)) ||
-            sql_field->real_field_type() == MYSQL_TYPE_VARCHAR)
-	  key_info->flags|= HA_BINARY_PACK_KEY | HA_VAR_LENGTH_KEY;
-	else
-	  key_info->flags|= HA_PACK_KEY;
+        key_info->flags|= sql_field->type_handler()->KEY_pack_flags(column_nr);
       }
       /* Check if the key segment is partial, set the key flag accordingly */
-      if (key_part_length != sql_field->key_length &&
+      if (key_part_length != sql_field->type_handler()->
+                                          calc_key_length(*sql_field) &&
           key_part_length != sql_field->type_handler()->max_octet_length())
         key_info->flags|= HA_KEY_HAS_PART_KEY_SEG;
 
@@ -4500,7 +4495,7 @@ bool Column_definition::prepare_blob_field(THD *thd)
       set_handler(Type_handler::blob_type_handler((uint) length));
       pack_length= type_handler()->calc_pack_length(0);
     }
-    length= key_length= 0;
+    length= 0;
   }
   DBUG_RETURN(0);
 }
@@ -7138,10 +7133,10 @@ static bool fill_alter_inplace_info(THD *thd, TABLE *table, bool varchar,
 
       --ha_alter_info->index_add_count;
       --ha_alter_info->index_drop_count;
-      memcpy(add_buffer + i, add_buffer + i + 1,
-             sizeof(add_buffer[0]) * (ha_alter_info->index_add_count - i));
-      memcpy(drop_buffer + j, drop_buffer + j + 1,
-             sizeof(drop_buffer[0]) * (ha_alter_info->index_drop_count - j));
+      memmove(add_buffer + i, add_buffer + i + 1,
+              sizeof(add_buffer[0]) * (ha_alter_info->index_add_count - i));
+      memmove(drop_buffer + j, drop_buffer + j + 1,
+              sizeof(drop_buffer[0]) * (ha_alter_info->index_drop_count - j));
       --i; // this index once again
       break;
     }
@@ -10180,7 +10175,7 @@ do_continue:;
   if (table->s->tmp_table != NO_TMP_TABLE)
   {
     /* in case of alter temp table send the tracker in OK packet */
-    SESSION_TRACKER_CHANGED(thd, SESSION_STATE_CHANGE_TRACKER, NULL);
+    thd->session_tracker.state_change.mark_as_changed(thd);
   }
 
   /*
@@ -11194,7 +11189,8 @@ bool Sql_cmd_create_table_like::execute(THD *thd)
   LEX *lex= thd->lex;
   SELECT_LEX *select_lex= lex->first_select_lex();
   TABLE_LIST *first_table= select_lex->table_list.first;
-  DBUG_ASSERT(first_table == lex->query_tables && first_table != 0);
+  DBUG_ASSERT(first_table == lex->query_tables);
+  DBUG_ASSERT(first_table != 0);
   bool link_to_local;
   TABLE_LIST *create_table= first_table;
   TABLE_LIST *select_tables= lex->create_last_non_select_table->next_global;
@@ -11310,7 +11306,7 @@ bool Sql_cmd_create_table_like::execute(THD *thd)
   }
 #endif
 
-  if (select_lex->item_list.elements)		// With select
+  if (select_lex->item_list.elements || select_lex->tvc) // With select or TVC
   {
     select_result *result;
 
@@ -11481,7 +11477,7 @@ bool Sql_cmd_create_table_like::execute(THD *thd)
          ON then send session state notification in OK packet */
       if (create_info.options & HA_LEX_CREATE_TMP_TABLE)
       {
-        SESSION_TRACKER_CHANGED(thd, SESSION_STATE_CHANGE_TRACKER, NULL);
+        thd->session_tracker.state_change.mark_as_changed(thd);
       }
       my_ok(thd);
     }

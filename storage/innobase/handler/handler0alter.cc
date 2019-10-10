@@ -5630,7 +5630,7 @@ static bool innobase_instant_try(
 	dict_index_t* index = dict_table_get_first_index(user_table);
 	mtr_t mtr;
 	mtr.start();
-	/* Prevent purge from calling dict_index_t::clear_instant_alter(),
+	/* Prevent purge from calling dict_index_t::clear_instant_add(),
 	to protect index->n_core_fields, index->table->instant and others
 	from changing during ctx->instant_column(). */
 	instant_metadata_lock(*index, mtr);
@@ -5820,7 +5820,9 @@ add_all_virtual:
 	dberr_t err = DB_SUCCESS;
 	if (rec_is_metadata(rec, *index)) {
 		ut_ad(page_rec_is_user_rec(rec));
-		if (!page_has_next(block->frame)
+		if (!rec_is_alter_metadata(rec, *index)
+		    && !index->table->instant
+		    && !page_has_next(block->frame)
 		    && page_rec_is_last(rec, block->frame)) {
 			goto empty_table;
 		}
@@ -5901,7 +5903,7 @@ add_all_virtual:
 		}
 		btr_pcur_close(&pcur);
 		goto func_exit;
-	} else if (page_rec_is_supremum(rec)) {
+	} else if (page_rec_is_supremum(rec) && !index->table->instant) {
 empty_table:
 		/* The table is empty. */
 		ut_ad(fil_page_index_page_check(block->frame));
@@ -5909,7 +5911,9 @@ empty_table:
 		ut_ad(block->page.id.page_no() == index->page);
 		/* MDEV-17383: free metadata BLOBs! */
 		btr_page_empty(block, NULL, index, 0, &mtr);
-		index->clear_instant_alter();
+		if (index->is_instant()) {
+			index->clear_instant_add();
+		}
 		goto func_exit;
 	} else if (!user_table->is_instant()) {
 		ut_ad(!user_table->not_redundant());
@@ -5933,7 +5937,7 @@ empty_table:
 		index->set_modified(mtr);
 		err = row_ins_clust_index_entry_low(
 			BTR_NO_LOCKING_FLAG, BTR_MODIFY_TREE, index,
-			index->n_uniq, entry, 0, thr, false);
+			index->n_uniq, entry, 0, thr);
 	} else {
 err_exit:
 		err = DB_CORRUPTION;
@@ -6997,15 +7001,13 @@ op_ok:
 				goto error_handling;
 			}
 
-			ctx->new_table->fts->fts_status
-				|= TABLE_DICT_LOCKED;
+			ctx->new_table->fts->dict_locked = true;
 
 			error = innobase_fts_load_stopword(
 				ctx->new_table, ctx->trx,
 				ctx->prebuilt->trx->mysql_thd)
 				? DB_SUCCESS : DB_ERROR;
-			ctx->new_table->fts->fts_status
-				&= ulint(~TABLE_DICT_LOCKED);
+			ctx->new_table->fts->dict_locked = false;
 
 			if (error != DB_SUCCESS) {
 				goto error_handling;
@@ -9591,7 +9593,7 @@ innobase_update_foreign_cache(
 	also be loaded. */
 	while (err == DB_SUCCESS && !fk_tables.empty()) {
 		dict_table_t*	table = dict_load_table(
-			fk_tables.front(), true, DICT_ERR_IGNORE_NONE);
+			fk_tables.front(), DICT_ERR_IGNORE_NONE);
 
 		if (table == NULL) {
 			err = DB_TABLE_NOT_FOUND;
@@ -10357,6 +10359,7 @@ commit_cache_norebuild(
 					    || (index->type
 						& DICT_CORRUPT));
 				DBUG_ASSERT(index->table->fts);
+				DEBUG_SYNC_C("norebuild_fts_drop");
 				fts_drop_index(index->table, index, trx);
 			}
 
