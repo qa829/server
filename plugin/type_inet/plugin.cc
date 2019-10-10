@@ -1,6 +1,4 @@
-/* Copyright (c) 2011, 2013, Oracle and/or its affiliates. All rights reserved.
-   Copyright (c) 2014 MariaDB Foundation
-   Copyright (c) 2019 MariaDB Corporation
+/* Copyright (c) 2019 MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -191,7 +189,7 @@ maria_declare_plugin(type_inet)
   PLUGIN_LICENSE_GPL,           // the plugin license (see include/mysql/plugin.h)
   0,                            // Pointer to plugin initialization function
   0,                            // Pointer to plugin deinitialization function
-  0x0100,                       // Numeric version 0xAABB means AA.BB veriosn
+  0x0100,                       // Numeric version 0xAABB means AA.BB version
   NULL,                         // Status variables
   NULL,                         // System variables
   "1.0",                        // String version representation
@@ -202,11 +200,11 @@ maria_declare_plugin(type_inet)
   &plugin_descriptor_type_inet6,// pointer to type-specific plugin descriptor
   type_handler_inet6.name().ptr(),// plugin name
   "MariaDB Corporation",        // plugin author
-  "Data type TEST_INT8",        // the plugin description
+  "Data type INET6",            // the plugin description
   PLUGIN_LICENSE_GPL,           // the plugin license (see include/mysql/plugin.h)
   0,                            // Pointer to plugin initialization function
   0,                            // Pointer to plugin deinitialization function
-  0x0100,                       // Numeric version 0xAABB means AA.BB veriosn
+  0x0100,                       // Numeric version 0xAABB means AA.BB version
   NULL,                         // Status variables
   NULL,                         // System variables
   "1.0",                        // String version representation

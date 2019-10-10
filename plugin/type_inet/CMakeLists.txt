@@ -1,4 +1,4 @@
-# Copyright (c) 2016-2019, MariaDB corporation. All rights reserved.
+# Copyright (c) 2019, MariaDB corporation.
 # 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -15,4 +15,4 @@
 
 MYSQL_ADD_PLUGIN(type_inet
                  plugin.cc item_inetfunc.cc sql_type_inet.cc
-                 MANDATORY RECOMPILE_FOR_EMBEDDED)
+                 DEFAULT RECOMPILE_FOR_EMBEDDED)

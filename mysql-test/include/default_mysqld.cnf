@@ -124,7 +124,5 @@ loose-ssl-key=@ENV.MYSQL_TEST_DIR/std_data/server-key.pem
 local-infile
 
 [server]
-# Aria is optional, but it must be enabled if it's used for temporary
-# tables.  Let's enable it in the [server] group, because this group
-# is read after [mysqld] and [embedded]
-loose-aria
+loose-inet6
+loose-func-inet
