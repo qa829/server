@@ -2418,6 +2418,13 @@ int mysql_rm_table_no_locks(THD *thd, TABLE_LIST *tables, bool if_exists,
                             ER_BAD_TABLE_ERROR,
                             ER_THD(thd, ER_BAD_TABLE_ERROR),
                             tbl_name.c_ptr_safe());
+
+        /*
+           "DROP TEMPORARY .. IF EXISTS" should stop here. "continue" helps
+           avoid an unnecessary PSI_CALL_drop_table_share farther below which
+           sometimes causes the server to crash (MDEV-17896).
+        */
+        continue;
       }
       else
       {
