@@ -2530,6 +2530,7 @@ static THD* acquire_thd()
 
 void release_thd(THD* thd)
 {
+	set_current_thd(0);
 	std::unique_lock<std::mutex> lk(purge_thd_mutex);
 	purge_thds.push(thd);
 }
@@ -2572,7 +2573,8 @@ void srv_shutdown_purge_tasks()
 {
 	purge_task.wait();
 	while (!purge_thds.empty()) {
-		innobase_destroy_background_thd(acquire_thd());
+		innobase_destroy_background_thd(purge_thds.front());
+		purge_thds.pop();
 	}
 }
 
