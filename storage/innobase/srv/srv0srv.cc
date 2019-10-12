@@ -2511,9 +2511,12 @@ std::mutex purge_thd_mutex;
 
 void purge_create_background_thds(int n)
 {
+	THD* thd = current_thd;
+	std::unique_lock<std::mutex> lk(purge_thd_mutex);
 	for (int i = 0; i < n; i++) {
 		purge_thds.push(innobase_create_background_thd("Innodb purge worker"));
 	}
+	set_current_thd(thd);
 }
 
 static THD* acquire_thd()

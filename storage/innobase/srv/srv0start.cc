@@ -2213,13 +2213,13 @@ skip_monitors:
 	if (!srv_read_only_mode && srv_operation == SRV_OPERATION_NORMAL
 	    && srv_force_recovery < SRV_FORCE_NO_BACKGROUND) {
 
+		srv_init_purge_tasks(srv_n_purge_threads - 1);
+
 		thread_handles[5 + SRV_MAX_N_IO_THREADS] = os_thread_create(
 			srv_purge_coordinator_thread,
 			NULL, thread_ids + 5 + SRV_MAX_N_IO_THREADS);
 
 		thread_started[5 + SRV_MAX_N_IO_THREADS] = true;
-
-		srv_init_purge_tasks(srv_n_purge_threads-1);
 
 		while (srv_shutdown_state == SRV_SHUTDOWN_NONE
 		       && srv_force_recovery < SRV_FORCE_NO_BACKGROUND
