@@ -2534,11 +2534,17 @@ void release_thd(THD* thd)
 	purge_thds.push(thd);
 }
 
+extern "C" void thd_attach_thd(THD*);
 
 void purge_callback(void *)
 {
+	ut_ad(!current_thd);
+
 	THD* thd = acquire_thd();
-	set_current_thd(thd);
+
+	/* Set current thd, and thd->mysys_var as well,
+	it might be used by something in the server.*/
+	thd_attach_thd(thd);
 
 	ut_ad(!srv_read_only_mode);
 	ut_ad(srv_force_recovery < SRV_FORCE_NO_BACKGROUND);
