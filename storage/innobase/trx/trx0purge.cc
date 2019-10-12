@@ -1250,21 +1250,15 @@ trx_purge_dml_delay(void)
 	return(delay);
 }
 
+#include <tp0tp.h>
+extern tpool::waitable_task purge_task;
+
 /** Wait for pending purge jobs to complete. */
 static
 void
 trx_purge_wait_for_workers_to_complete()
 {
-	/* Ensure that the work queue empties out. */
-	while (purge_sys.n_tasks.load(std::memory_order_acquire)) {
-
-		if (srv_get_task_queue_length() > 0) {
-			srv_release_threads(SRV_WORKER, 1);
-		}
-
-		os_thread_yield();
-	}
-
+	purge_task.wait();
 	/* There should be no outstanding tasks as long
 	as the worker threads are active. */
 	ut_a(srv_get_task_queue_length() == 0);
@@ -1305,10 +1299,11 @@ trx_purge(
 	purge_sys.n_tasks.store(n_purge_threads - 1, std::memory_order_relaxed);
 
 	/* Submit tasks to workers queue if using multi-threaded purge. */
-	for (ulint i = n_purge_threads; --i; ) {
+	for (ulint i = 0; i < n_purge_threads-1; i++) {
 		thr = que_fork_scheduler_round_robin(purge_sys.query, thr);
 		ut_a(thr);
 		srv_que_task_enqueue_low(thr);
+		srv_thread_pool->submit_task(&purge_task);
 	}
 
 	thr = que_fork_scheduler_round_robin(purge_sys.query, thr);

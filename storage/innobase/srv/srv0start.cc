@@ -2219,16 +2219,7 @@ skip_monitors:
 
 		thread_started[5 + SRV_MAX_N_IO_THREADS] = true;
 
-		ut_a(UT_ARR_SIZE(thread_ids)
-		     > 5 + srv_n_purge_threads + SRV_MAX_N_IO_THREADS);
-
-		/* We've already created the purge coordinator thread above. */
-		for (i = 1; i < srv_n_purge_threads; ++i) {
-			thread_handles[5 + i + SRV_MAX_N_IO_THREADS] = os_thread_create(
-				srv_worker_thread, NULL,
-				thread_ids + 5 + i + SRV_MAX_N_IO_THREADS);
-			thread_started[5 + i + SRV_MAX_N_IO_THREADS] = true;
-		}
+		srv_init_purge_tasks(srv_n_purge_threads-1);
 
 		while (srv_shutdown_state == SRV_SHUTDOWN_NONE
 		       && srv_force_recovery < SRV_FORCE_NO_BACKGROUND

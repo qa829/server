@@ -997,7 +997,7 @@ void srv_thread_pool_init()
 {
 	DBUG_ASSERT(!srv_thread_pool);
 
-#if defined (_WIN32)
+#if defined (_WIN32) && 0
 	srv_thread_pool = tpool::create_thread_pool_win();
 #else
 	srv_thread_pool = tpool::create_thread_pool_generic();
@@ -2370,71 +2370,6 @@ static bool srv_task_execute()
 	return false;
 }
 
-/*********************************************************************//**
-Worker thread that reads tasks from the work queue and executes them.
-@return a dummy parameter */
-extern "C"
-os_thread_ret_t
-DECLARE_THREAD(srv_worker_thread)(
-/*==============================*/
-	void*	arg MY_ATTRIBUTE((unused)))	/*!< in: a dummy parameter
-						required by os_thread_create */
-{
-	my_thread_init();
-
-	srv_slot_t*	slot;
-
-	ut_ad(!srv_read_only_mode);
-	ut_a(srv_force_recovery < SRV_FORCE_NO_BACKGROUND);
-	my_thread_init();
-	THD*		thd = innobase_create_background_thd("InnoDB purge worker");
-
-#ifdef UNIV_DEBUG_THREAD_CREATION
-	ib::info() << "Worker thread starting, id "
-		<< os_thread_pf(os_thread_get_curr_id());
-#endif /* UNIV_DEBUG_THREAD_CREATION */
-
-	slot = srv_reserve_slot(SRV_WORKER);
-
-	ut_a(srv_n_purge_threads > 1);
-	ut_a(ulong(srv_sys.n_threads_active[SRV_WORKER])
-	     < srv_n_purge_threads);
-
-	/* We need to ensure that the worker threads exit after the
-	purge coordinator thread. Otherwise the purge coordinator can
-	end up waiting forever in trx_purge_wait_for_workers_to_complete() */
-
-	do {
-		srv_suspend_thread(slot);
-		srv_resume_thread(slot);
-
-		if (srv_task_execute()) {
-
-			/* If there are tasks in the queue, wakeup
-			the purge coordinator thread. */
-
-			srv_wake_purge_thread_if_not_active();
-		}
-	} while (purge_sys.enabled());
-
-	srv_free_slot(slot);
-
-	ut_ad(!purge_sys.enabled());
-
-#ifdef UNIV_DEBUG_THREAD_CREATION
-	ib::info() << "Purge worker thread exiting, id "
-		<< os_thread_pf(os_thread_get_curr_id());
-#endif /* UNIV_DEBUG_THREAD_CREATION */
-
-	innobase_destroy_background_thd(thd);
-	my_thread_end();
-	/* We count the number of threads in os_thread_exit(). A created
-	thread should always use that to exit and not use return() to exit. */
-	os_thread_exit();
-
-	OS_THREAD_DUMMY_RETURN;	/* Not reached, avoid compiler warning */
-}
-
 /** Do the actual purge operation.
 @param[in,out]	n_total_purged	total number of purged pages
 @return length of history list before the last purge batch. */
@@ -2570,6 +2505,69 @@ srv_purge_coordinator_suspend(
 	srv_resume_thread(slot, 0, false);
 }
 
+#include <mutex>
+std::queue<THD*> purge_thds;
+std::mutex purge_thd_mutex;
+
+void purge_create_background_thds(int n)
+{
+	for (int i = 0; i < n; i++) {
+		purge_thds.push(innobase_create_background_thd("Innodb purge worker"));
+	}
+}
+
+static THD* acquire_thd()
+{
+	std::unique_lock<std::mutex> lk(purge_thd_mutex);
+	ut_a(!purge_thds.empty());
+	THD* thd = purge_thds.front();
+	purge_thds.pop();
+	return thd;
+}
+
+void release_thd(THD* thd)
+{
+	std::unique_lock<std::mutex> lk(purge_thd_mutex);
+	purge_thds.push(thd);
+}
+
+
+void purge_callback(void *)
+{
+	THD* thd = acquire_thd();
+	set_current_thd(thd);
+
+	ut_ad(!srv_read_only_mode);
+	ut_ad(srv_force_recovery < SRV_FORCE_NO_BACKGROUND);
+
+	while (srv_task_execute())
+	{
+	}
+
+	release_thd(thd);
+	set_current_thd(0);
+}
+
+tpool::task_group purge_task_group;
+
+tpool::waitable_task purge_task(purge_callback, nullptr, &purge_task_group);
+
+
+void srv_init_purge_tasks(uint n_tasks)
+{
+	purge_task_group.set_max_tasks(n_tasks);
+	purge_create_background_thds(n_tasks);
+}
+
+void srv_shutdown_purge_tasks()
+{
+	purge_task.wait();
+	while (!purge_thds.empty()) {
+		innobase_destroy_background_thd(acquire_thd());
+	}
+}
+
+
 /*********************************************************************//**
 Purge coordinator thread that schedules the purge tasks.
 @return a dummy parameter */
@@ -2644,22 +2642,7 @@ DECLARE_THREAD(srv_purge_coordinator_thread)(
 	ib::info() << "Purge coordinator exiting, id "
 		<< os_thread_pf(os_thread_get_curr_id());
 #endif /* UNIV_DEBUG_THREAD_CREATION */
-
-	/* Ensure that all the worker threads quit. */
-	if (ulint n_workers = srv_n_purge_threads - 1) {
-		const srv_slot_t* slot;
-		const srv_slot_t* const end = &srv_sys.sys_threads[
-			srv_sys.n_sys_threads];
-
-		do {
-			srv_release_threads(SRV_WORKER, n_workers);
-			srv_sys_mutex_enter();
-			for (slot = &srv_sys.sys_threads[2];
-			     !slot++->in_use && slot < end; );
-			srv_sys_mutex_exit();
-		} while (slot < end);
-	}
-
+	srv_shutdown_purge_tasks();
 	innobase_destroy_background_thd(thd);
 	my_thread_end();
 	/* We count the number of threads in os_thread_exit(). A created
@@ -2683,8 +2666,6 @@ srv_que_task_enqueue_low(
 	UT_LIST_ADD_LAST(srv_sys.tasks, thr);
 
 	mutex_exit(&srv_sys.tasks_mutex);
-
-	srv_release_threads(SRV_WORKER, 1);
 }
 
 /**********************************************************************//**

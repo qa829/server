@@ -882,6 +882,12 @@ srv_purge_wakeup();
 /** Shut down the purge threads. */
 void srv_purge_shutdown();
 
+/** Init purge tasks*/
+void srv_init_purge_tasks(uint n_max);
+
+/** Shut down purge tasks*/
+void srv_shutdown_purge_tasks();
+
 #ifdef UNIV_DEBUG
 /** Disables master thread. It's used by:
 	SET GLOBAL innodb_master_thread_disabled_debug = 1 (0).

@@ -4,6 +4,8 @@
 #include <condition_variable>
 #include <queue>
 
+#pragma once
+
 extern tpool::thread_pool *srv_thread_pool;
 extern std::unique_ptr<tpool::timer> srv_master_timer;
 extern std::unique_ptr<tpool::timer> srv_error_monitor_timer;
