@@ -4945,6 +4945,12 @@ thd_need_wait_reports(const MYSQL_THD thd)
   return rgi->is_parallel_exec;
 }
 
+/* Used by Innodb purge threads*/
+extern "C" void thd_attach_thd(THD * another_thd)
+{
+  set_current_thd(another_thd);
+  another_thd->mysys_var = _my_thread_var();
+}
 /*
   Used by storage engines (currently TokuDB and InnoDB) to report that
   one transaction THD is about to go to wait for a transactional lock held by
