@@ -7204,7 +7204,7 @@ wait_for_commit::reinit()
 {
   subsequent_commits_list= NULL;
   next_subsequent_commit= NULL;
-  waitee= NULL;
+  waitee.store(NULL, std::memory_order_relaxed);
   opaque_pointer= NULL;
   wakeup_error= 0;
   wakeup_subsequent_commits_running= false;
@@ -7282,8 +7282,9 @@ wait_for_commit::wakeup(int wakeup_error)
 
   */
   mysql_mutex_lock(&LOCK_wait_commit);
-  waitee= NULL;
   this->wakeup_error= wakeup_error;
+  /* Memory barrier to make wakeup_error visible to the waiter thread. */
+  waitee.store(NULL, std::memory_order_release);
   /*
     Note that it is critical that the mysql_cond_signal() here is done while
     still holding the mutex. As soon as we release the mutex, the waiter might
@@ -7314,9 +7315,10 @@ wait_for_commit::wakeup(int wakeup_error)
 void
 wait_for_commit::register_wait_for_prior_commit(wait_for_commit *waitee)
 {
-  DBUG_ASSERT(!this->waitee /* No prior registration allowed */);
+  DBUG_ASSERT(!this->waitee.load(std::memory_order_relaxed)
+              /* No prior registration allowed */);
   wakeup_error= 0;
-  this->waitee= waitee;
+  this->waitee.store(waitee, std::memory_order_relaxed);
 
   mysql_mutex_lock(&waitee->LOCK_wait_commit);
   /*
@@ -7325,7 +7327,7 @@ wait_for_commit::register_wait_for_prior_commit(wait_for_commit *waitee)
     see comments on wakeup_subsequent_commits2() for details.
   */
   if (waitee->wakeup_subsequent_commits_running)
-    this->waitee= NULL;
+    this->waitee.store(NULL, std::memory_order_relaxed);
   else
   {
     /*
@@ -7355,7 +7357,8 @@ wait_for_commit::wait_for_prior_commit2(THD *thd)
   thd->ENTER_COND(&COND_wait_commit, &LOCK_wait_commit,
                   &stage_waiting_for_prior_transaction_to_commit,
                   &old_stage);
-  while ((loc_waitee= this->waitee) && likely(!thd->check_killed(1)))
+  while ((loc_waitee= this->waitee.load(std::memory_order_relaxed)) &&
+         likely(!thd->check_killed(1)))
     mysql_cond_wait(&COND_wait_commit, &LOCK_wait_commit);
   if (!loc_waitee)
   {
@@ -7378,14 +7381,14 @@ wait_for_commit::wait_for_prior_commit2(THD *thd)
     do
     {
       mysql_cond_wait(&COND_wait_commit, &LOCK_wait_commit);
-    } while (this->waitee);
+    } while (this->waitee.load(std::memory_order_relaxed));
     if (wakeup_error)
       my_error(ER_PRIOR_COMMIT_FAILED, MYF(0));
     goto end;
   }
   remove_from_list(&loc_waitee->subsequent_commits_list);
   mysql_mutex_unlock(&loc_waitee->LOCK_wait_commit);
-  this->waitee= NULL;
+  this->waitee.store(NULL, std::memory_order_relaxed);
 
   wakeup_error= thd->killed_errno();
   if (!wakeup_error)
@@ -7487,7 +7490,7 @@ wait_for_commit::unregister_wait_for_prior_commit2()
   wait_for_commit *loc_waitee;
 
   mysql_mutex_lock(&LOCK_wait_commit);
-  if ((loc_waitee= this->waitee))
+  if ((loc_waitee= this->waitee.load(std::memory_order_relaxed)))
   {
     mysql_mutex_lock(&loc_waitee->LOCK_wait_commit);
     if (loc_waitee->wakeup_subsequent_commits_running)
@@ -7500,7 +7503,7 @@ wait_for_commit::unregister_wait_for_prior_commit2()
         See comments on wakeup_subsequent_commits2() for more details.
       */
       mysql_mutex_unlock(&loc_waitee->LOCK_wait_commit);
-      while (this->waitee)
+      while (this->waitee.load(std::memory_order_relaxed))
         mysql_cond_wait(&COND_wait_commit, &LOCK_wait_commit);
     }
     else
@@ -7508,7 +7511,7 @@ wait_for_commit::unregister_wait_for_prior_commit2()
       /* Remove ourselves from the list in the waitee. */
       remove_from_list(&loc_waitee->subsequent_commits_list);
       mysql_mutex_unlock(&loc_waitee->LOCK_wait_commit);
-      this->waitee= NULL;
+      this->waitee.store(NULL, std::memory_order_relaxed);
     }
   }
   wakeup_error= 0;
