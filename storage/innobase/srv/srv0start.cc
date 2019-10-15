@@ -2316,10 +2316,22 @@ void srv_shutdown_bg_undo_sources()
 	}
 }
 
-/** Shut down InnoDB. */
-void innodb_shutdown()
+/**
+Perform pre-shutdown task.
+
+Since purge tasks vall into server (some MDL acqusition,
+and compute virtual functions), let them shut down right
+after use connections go down while the rest of the server
+infrasture is still intact.
+*/
+void innodb_preshutdown()
 {
-	if (!srv_read_only_mode){
+	static bool first_time = true;
+	if (!first_time)
+		return;
+	first_time = false;
+
+	if (!srv_read_only_mode) {
 		if (!srv_fast_shutdown && srv_operation == SRV_OPERATION_NORMAL) {
 			while (trx_sys.any_active_transactions()) {
 				os_thread_sleep(1000);
@@ -2328,8 +2340,14 @@ void innodb_shutdown()
 		srv_shutdown_bg_undo_sources();
 		srv_purge_shutdown();
 	}
-	ut_ad(!srv_undo_sources);
+}
 
+
+/** Shut down InnoDB. */
+void innodb_shutdown()
+{
+	innodb_preshutdown();
+	ut_ad(!srv_undo_sources);
 	switch (srv_operation) {
 	case SRV_OPERATION_BACKUP:
 	case SRV_OPERATION_RESTORE:

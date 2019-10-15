@@ -3961,6 +3961,7 @@ static int innodb_init(void* p)
 
 	innobase_hton->drop_database = innobase_drop_database;
 	innobase_hton->panic = innobase_end;
+	innobase_hton->pre_shutdown = innodb_preshutdown;
 
 	innobase_hton->start_consistent_snapshot =
 		innobase_start_trx_and_assign_read_view;
