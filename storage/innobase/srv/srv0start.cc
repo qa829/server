@@ -2319,7 +2319,15 @@ void srv_shutdown_bg_undo_sources()
 /** Shut down InnoDB. */
 void innodb_shutdown()
 {
-	ut_ad(!srv_running.load(std::memory_order_relaxed));
+	if (!srv_read_only_mode){
+		if (!srv_fast_shutdown && srv_operation == SRV_OPERATION_NORMAL) {
+			while (trx_sys.any_active_transactions()) {
+				os_thread_sleep(1000);
+			}
+		}
+		srv_shutdown_bg_undo_sources();
+		srv_purge_shutdown();
+	}
 	ut_ad(!srv_undo_sources);
 
 	switch (srv_operation) {

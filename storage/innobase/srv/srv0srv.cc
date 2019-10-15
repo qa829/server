@@ -2536,6 +2536,7 @@ void release_thd(THD* thd)
 }
 
 extern "C" void thd_attach_thd(THD*);
+extern "C" void thd_detach_thd(THD*);
 
 void purge_callback(void *)
 {
@@ -2554,6 +2555,7 @@ void purge_callback(void *)
 	{
 	}
 
+	thd_detach_thd(thd);
 	release_thd(thd);
 	set_current_thd(0);
 }
@@ -2591,6 +2593,7 @@ DECLARE_THREAD(srv_purge_coordinator_thread)(
 {
 	my_thread_init();
 	THD*		thd = innobase_create_background_thd("InnoDB purge coordinator");
+	thd_attach_thd(thd);
 	srv_slot_t*	slot;
 	ulint           n_total_purged = ULINT_UNDEFINED;
 
@@ -2718,9 +2721,8 @@ srv_purge_wakeup()
 
 			srv_release_threads(SRV_WORKER, n_workers);
 		}
-	} while (!srv_running.load(std::memory_order_relaxed)
-		 && (srv_sys.n_threads_active[SRV_WORKER]
-		     || srv_sys.n_threads_active[SRV_PURGE]));
+	} while (srv_sys.n_threads_active[SRV_WORKER]
+		     || srv_sys.n_threads_active[SRV_PURGE]);
 }
 
 /** Shut down the purge threads. */

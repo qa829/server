@@ -124,8 +124,8 @@ void thd_clear_error(MYSQL_THD thd);
 
 TABLE *find_fk_open_table(THD *thd, const char *db, size_t db_len,
 			  const char *table, size_t table_len);
-MYSQL_THD create_thd();
-void destroy_thd(MYSQL_THD thd);
+MYSQL_THD create_background_thd();
+void destroy_background_thd(MYSQL_THD thd);
 void reset_thd(MYSQL_THD thd);
 TABLE *open_purge_table(THD *thd, const char *db, size_t dblen,
 			const char *tb, size_t tblen);
@@ -253,62 +253,7 @@ is_partition(
 	return strstr(file_name, table_name_t::part_suffix);
 }
 
-/** Signal to shut down InnoDB (NULL if shutdown was signaled, or if
-running in innodb_read_only mode, srv_read_only_mode) */
-std::atomic <st_my_thread_var *> srv_running;
-/** Service thread that waits for the server shutdown and stops purge threads.
-Purge workers have THDs that are needed to calculate virtual columns.
-This THDs must be destroyed rather early in the server shutdown sequence.
-This service thread creates a THD and idly waits for it to get a signal to
-die. Then it notifies all purge workers to shutdown.
-*/
-static pthread_t thd_destructor_thread;
 
-pthread_handler_t
-thd_destructor_proxy(void *)
-{
-	mysql_mutex_t thd_destructor_mutex;
-	mysql_cond_t thd_destructor_cond;
-
-	my_thread_init();
-	mysql_mutex_init(PSI_NOT_INSTRUMENTED, &thd_destructor_mutex, 0);
-	mysql_cond_init(PSI_NOT_INSTRUMENTED, &thd_destructor_cond, 0);
-
-	st_my_thread_var *myvar= _my_thread_var();
-	myvar->current_mutex = &thd_destructor_mutex;
-	myvar->current_cond = &thd_destructor_cond;
-
-	THD *thd= create_thd();
-	thd_proc_info(thd, "InnoDB shutdown handler");
-
-
-	mysql_mutex_lock(&thd_destructor_mutex);
-	srv_running.store(myvar, std::memory_order_relaxed);
-	/* wait until the server wakes the THD to abort and die */
-	while (!myvar->abort)
-		mysql_cond_wait(&thd_destructor_cond, &thd_destructor_mutex);
-	mysql_mutex_unlock(&thd_destructor_mutex);
-	srv_running.store(NULL, std::memory_order_relaxed);
-
-	while (srv_fast_shutdown == 0 &&
-	       (trx_sys.any_active_transactions() ||
-		(uint)thread_count > srv_n_purge_threads + 1)) {
-		thd_proc_info(thd, "InnoDB slow shutdown wait");
-		os_thread_sleep(1000);
-	}
-
-	/* Some background threads might generate undo pages that will
-	need to be purged, so they have to be shut down before purge
-	threads if slow shutdown is requested.  */
-	srv_shutdown_bg_undo_sources();
-	srv_purge_shutdown();
-
-	destroy_thd(thd);
-	mysql_cond_destroy(&thd_destructor_cond);
-	mysql_mutex_destroy(&thd_destructor_mutex);
-	my_thread_end();
-	return 0;
-}
 
 /** Return the InnoDB ROW_FORMAT enum value
 @param[in]	row_format	row_format from "innodb_default_row_format"
@@ -1589,7 +1534,7 @@ MYSQL_THD
 innobase_create_background_thd(const char* name)
 /*============================*/
 {
-	MYSQL_THD thd= create_thd();
+	MYSQL_THD thd= create_background_thd();
 	thd_proc_info(thd, name);
 	THDVAR(thd, background_thread) = true;
 	return thd;
@@ -1607,7 +1552,7 @@ innobase_destroy_background_thd(
 	if innodb is in the PLUGIN_IS_DYING state */
 	innobase_close_connection(innodb_hton_ptr, thd);
 	thd_set_ha_data(thd, innodb_hton_ptr, NULL);
-	destroy_thd(thd);
+	destroy_background_thd(thd);
 }
 
 /** Close opened tables, free memory, delete items for a MYSQL_THD.
@@ -4117,12 +4062,6 @@ static int innodb_init(void* p)
 	if (err != DB_SUCCESS) {
 		innodb_shutdown();
 		DBUG_RETURN(innodb_init_abort());
-	} else if (!srv_read_only_mode) {
-		mysql_thread_create(thd_destructor_thread_key,
-				    &thd_destructor_thread,
-				    NULL, thd_destructor_proxy, NULL);
-		while (!srv_running.load(std::memory_order_relaxed))
-			os_thread_sleep(20);
 	}
 
 	srv_was_started = true;
@@ -4201,17 +4140,6 @@ innobase_end(handlerton*, ha_panic_function)
 		 	}
 		}
 
-		if (auto r = srv_running.load(std::memory_order_relaxed)) {
-			ut_ad(!srv_read_only_mode);
-			if (!abort_loop) {
-				// may be UNINSTALL PLUGIN statement
-				mysql_mutex_lock(r->current_mutex);
-				r->abort = 1;
-				mysql_cond_broadcast(r->current_cond);
-				mysql_mutex_unlock(r->current_mutex);
-			}
-			pthread_join(thd_destructor_thread, NULL);
-		}
 
 		innodb_shutdown();
 		innobase_space_shutdown();
@@ -16936,7 +16864,7 @@ fast_shutdown_validate(
 	uint new_val = *reinterpret_cast<uint*>(save);
 
 	if (srv_fast_shutdown && !new_val
-	    && !srv_running.load(std::memory_order_relaxed)) {
+	    && !srv_read_only_mode && abort_loop) {
 		return(1);
 	}
 
