@@ -32,6 +32,7 @@
 #include "sp.h"                       // enum stored_procedure_type
 #include "sql_tvc.h"
 #include "item.h"
+#include "sql_limit.h"                // Select_limit_counters
 
 /* Used for flags of nesting constructs */
 #define SELECT_NESTING_MAP_SIZE 64
@@ -829,6 +830,7 @@ void create_explain_query(LEX *lex, MEM_ROOT *mem_root);
 void create_explain_query_if_not_exists(LEX *lex, MEM_ROOT *mem_root);
 bool print_explain_for_slow_log(LEX *lex, THD *thd, String *str);
 
+
 class st_select_lex_unit: public st_select_lex_node {
 protected:
   TABLE_LIST result_table_list;
@@ -908,7 +910,7 @@ public:
   //node on which we should return current_select pointer after parsing subquery
   st_select_lex *return_to;
   /* LIMIT clause runtime counters */
-  ha_rows select_limit_cnt, offset_limit_cnt;
+  Select_limit_counters lim;
   /* not NULL if unit used in subselect, point to subselect item */
   Item_subselect *item;
   /*
@@ -992,6 +994,21 @@ public:
   int save_union_explain(Explain_query *output);
   int save_union_explain_part2(Explain_query *output);
   unit_common_op common_op();
+
+  bool explainable()
+  {
+    /*
+      EXPLAIN/ANALYZE unit, when:
+      (1) if it's a subquery - it's not part of eliminated WHERE/ON clause.
+      (2) if it's a CTE - it's not hanging (needed for execution)
+      (3) if it's a derived - it's not merged
+      if it's not 1/2/3 - it's some weird internal thing, ignore it
+    */
+    return item ? !item->eliminated :                           // (1)
+           with_element ? derived && derived->derived_result :  // (2)
+           derived ? derived->is_materialized_derived() :       // (3)
+           false;
+  }
 
   void reset_distinct();
   void fix_distinct();
@@ -2940,15 +2957,6 @@ protected:
   bool impossible_where;
   bool no_partitions;
 public:
-  /*
-    When single-table UPDATE updates a VIEW, that VIEW's select is still
-    listed as the first child.  When we print EXPLAIN, it looks like a
-    subquery.
-    In order to get rid of it, updating_a_view=TRUE means that first child
-    select should not be shown when printing EXPLAIN.
-  */
-  bool updating_a_view;
-   
   /* Allocate things there */
   MEM_ROOT *mem_root;
 
@@ -3103,14 +3111,14 @@ struct LEX: public Query_tables_list
 
 private:
   SELECT_LEX builtin_select;
-  /* current SELECT_LEX in parsing */
 
 public:
+  /* current SELECT_LEX in parsing */
   SELECT_LEX *current_select;
   /* list of all SELECT_LEX */
   SELECT_LEX *all_selects_list;
   /* current with clause in parsing if any, otherwise 0*/
-  With_clause *curr_with_clause;  
+  With_clause *curr_with_clause;
   /* pointer to the first with clause in the current statement */
   With_clause *with_clauses_list;
   /*
@@ -4524,6 +4532,11 @@ public:
 
   void stmt_purge_to(const LEX_CSTRING &to);
   bool stmt_purge_before(Item *item);
+
+  SELECT_LEX *returning()
+  { return &builtin_select; }
+  bool has_returning()
+  { return !builtin_select.item_list.is_empty(); }
 
 private:
   bool stmt_create_routine_start(const DDL_options_st &options)

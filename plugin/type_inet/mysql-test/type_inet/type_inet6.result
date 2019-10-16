@@ -698,6 +698,8 @@ DROP TABLE t1,t2;
 #
 SELECT CAST(CAST('::' AS INET6) AS DOUBLE);
 ERROR HY000: Illegal parameter data type inet6 for operation 'double_typecast'
+SELECT CAST(CAST('::' AS INET6) AS FLOAT);
+ERROR HY000: Illegal parameter data type inet6 for operation 'float_typecast'
 SELECT CAST(CAST('::' AS INET6) AS DECIMAL);
 ERROR HY000: Illegal parameter data type inet6 for operation 'decimal_typecast'
 SELECT CAST(CAST('::' AS INET6) AS SIGNED);
@@ -719,6 +721,99 @@ Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` varchar(39) DEFAULT NULL
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1
+DROP TABLE t1;
+CREATE TABLE t1 (a INET6);
+INSERT INTO t1 VALUES ('ffff::ffff');
+CREATE TABLE t2 AS SELECT
+CAST(a AS CHAR),
+CAST(a AS CHAR(39)),
+CAST(a AS CHAR(530)),
+CAST(a AS CHAR(65535)),
+CAST(a AS CHAR(66000)),
+CAST(a AS CHAR(16777215)),
+CAST(a AS CHAR(16777216))
+FROM t1;
+SHOW CREATE TABLE t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `CAST(a AS CHAR)` varchar(39) DEFAULT NULL,
+  `CAST(a AS CHAR(39))` varchar(39) DEFAULT NULL,
+  `CAST(a AS CHAR(530))` text DEFAULT NULL,
+  `CAST(a AS CHAR(65535))` text DEFAULT NULL,
+  `CAST(a AS CHAR(66000))` mediumtext DEFAULT NULL,
+  `CAST(a AS CHAR(16777215))` mediumtext DEFAULT NULL,
+  `CAST(a AS CHAR(16777216))` longtext DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+SELECT * FROM t2;
+CAST(a AS CHAR)	ffff::ffff
+CAST(a AS CHAR(39))	ffff::ffff
+CAST(a AS CHAR(530))	ffff::ffff
+CAST(a AS CHAR(65535))	ffff::ffff
+CAST(a AS CHAR(66000))	ffff::ffff
+CAST(a AS CHAR(16777215))	ffff::ffff
+CAST(a AS CHAR(16777216))	ffff::ffff
+DROP TABLE t2;
+DROP TABLE t1;
+CREATE TABLE t1 (a INET6);
+INSERT INTO t1 VALUES ('ffff::ffff');
+CREATE TABLE t2 AS SELECT
+CAST(a AS BINARY(4)) AS cb4,
+CAST(a AS BINARY) AS cb,
+CAST(a AS BINARY(16)) AS cb16,
+CAST(a AS BINARY(32)) AS cb32,
+CAST(a AS BINARY(530)) AS cb530,
+CAST(a AS BINARY(65535)) AS cb65535,
+CAST(a AS BINARY(66000)) AS cb66000,
+CAST(a AS BINARY(16777215)) AS cb16777215,
+CAST(a AS BINARY(16777216)) AS cb16777216
+FROM t1 LIMIT 0;
+SHOW CREATE TABLE t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `cb4` binary(4) DEFAULT NULL,
+  `cb` binary(16) DEFAULT NULL,
+  `cb16` binary(16) DEFAULT NULL,
+  `cb32` binary(32) DEFAULT NULL,
+  `cb530` varbinary(530) DEFAULT NULL,
+  `cb65535` blob DEFAULT NULL,
+  `cb66000` mediumblob DEFAULT NULL,
+  `cb16777215` mediumblob DEFAULT NULL,
+  `cb16777216` longblob DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+DROP TABLE t2;
+CREATE TABLE t2 AS SELECT
+CAST(a AS BINARY(4)) AS cb4,
+CAST(a AS BINARY) AS cb,
+CAST(a AS BINARY(16)) AS cb16,
+CAST(a AS BINARY(32)) AS cb32,
+CAST(a AS BINARY(530)) AS cb530,
+CAST(a AS BINARY(65535)) AS cb65535
+FROM t1;
+SHOW CREATE TABLE t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `cb4` binary(4) DEFAULT NULL,
+  `cb` binary(16) DEFAULT NULL,
+  `cb16` binary(16) DEFAULT NULL,
+  `cb32` binary(32) DEFAULT NULL,
+  `cb530` varbinary(530) DEFAULT NULL,
+  `cb65535` blob DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+SELECT
+HEX(cb4),
+HEX(cb),
+HEX(cb16),
+HEX(cb32),
+LENGTH(cb530),
+LENGTH(cb65535)
+FROM t2;
+HEX(cb4)	FFFF0000
+HEX(cb)	FFFF000000000000000000000000FFFF
+HEX(cb16)	FFFF000000000000000000000000FFFF
+HEX(cb32)	FFFF000000000000000000000000FFFF00000000000000000000000000000000
+LENGTH(cb530)	530
+LENGTH(cb65535)	65535
+DROP TABLE t2;
 DROP TABLE t1;
 #
 # Implicit conversion to other types in INSERT
@@ -1485,6 +1580,280 @@ a
 2001:db8::ff00:42:8329
 DROP TABLE t1;
 #
+# SET from INET6 to INET6
+#
+CREATE TABLE t1 (a INET6, b INET6);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+SELECT b FROM t1;
+b
+ffff::ffff
+DROP TABLE t1;
+#
+# SET from INET6 to numeric
+#
+CREATE TABLE t1 (a INET6, b INT);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect integer value: 'ffff::ffff' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+CREATE TABLE t1 (a INET6, b DOUBLE);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect double value: 'ffff::ffff' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+CREATE TABLE t1 (a INET6, b DECIMAL(32,0));
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect decimal value: 'ffff::ffff' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+CREATE TABLE t1 (a INET6, b YEAR);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect integer value: 'ffff::ffff' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+#
+# SET from numeric to INET6
+#
+CREATE TABLE t1 (a INT, b INET6);
+INSERT INTO t1 VALUES (1, NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect inet6 value: '1' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+CREATE TABLE t1 (a DOUBLE, b INET6);
+INSERT INTO t1 VALUES (1, NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect inet6 value: '1' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+CREATE TABLE t1 (a DECIMAL(32,0), b INET6);
+INSERT INTO t1 VALUES (1, NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect inet6 value: '1' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+CREATE TABLE t1 (a YEAR, b INET6);
+INSERT INTO t1 VALUES (1, NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect inet6 value: '2001' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+#
+# SET from INET6 to temporal
+#
+CREATE TABLE t1 (a INET6, b TIME);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect time value: 'ffff::ffff' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+CREATE TABLE t1 (a INET6, b DATE);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect date value: 'ffff::ffff' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+CREATE TABLE t1 (a INET6, b DATETIME);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect datetime value: 'ffff::ffff' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+CREATE TABLE t1 (a INET6, b TIMESTAMP NULL DEFAULT NULL);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect datetime value: 'ffff::ffff' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+#
+# SET from temporal to INET6
+#
+CREATE TABLE t1 (a TIME, b INET6);
+INSERT INTO t1 VALUES ('00:00:00', NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect inet6 value: '00:00:00' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+CREATE TABLE t1 (a DATE, b INET6);
+INSERT INTO t1 VALUES ('2001-01:01', NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect inet6 value: '2001-01-01' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+CREATE TABLE t1 (a DATETIME, b INET6);
+INSERT INTO t1 VALUES ('2001-01-01 10:20:30', NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect inet6 value: '2001-01-01 10:20:30' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+CREATE TABLE t1 (a TIMESTAMP, b INET6);
+INSERT INTO t1 VALUES ('2001-01-01 10:20:30', NULL);
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect inet6 value: '2001-01-01 10:20:30' for column `test`.`t1`.`b` at row 1
+SELECT b FROM t1;
+b
+NULL
+DROP TABLE t1;
+#
+# SET from INET6 to character string
+#
+CREATE TABLE t1 (a INET6, b CHAR(39));
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+SELECT b FROM t1;
+b
+ffff::ffff
+DROP TABLE t1;
+CREATE TABLE t1 (a INET6, b VARCHAR(39));
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+SELECT b FROM t1;
+b
+ffff::ffff
+DROP TABLE t1;
+CREATE TABLE t1 (a INET6, b TEXT);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+SELECT b FROM t1;
+b
+ffff::ffff
+DROP TABLE t1;
+CREATE TABLE t1 (a INET6, b ENUM('ffff::ffff'));
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+SELECT b FROM t1;
+b
+ffff::ffff
+DROP TABLE t1;
+CREATE TABLE t1 (a INET6, b SET('ffff::ffff'));
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+SELECT b FROM t1;
+b
+ffff::ffff
+DROP TABLE t1;
+#
+# SET from character string to INET6
+#
+CREATE TABLE t1 (a CHAR(39), b INET6);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+SELECT b FROM t1;
+b
+ffff::ffff
+DROP TABLE t1;
+CREATE TABLE t1 (a VARCHAR(39), b INET6);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+SELECT b FROM t1;
+b
+ffff::ffff
+DROP TABLE t1;
+CREATE TABLE t1 (a TEXT, b INET6);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+SELECT b FROM t1;
+b
+ffff::ffff
+DROP TABLE t1;
+CREATE TABLE t1 (a ENUM('ffff::ffff'), b INET6);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+SELECT b FROM t1;
+b
+ffff::ffff
+DROP TABLE t1;
+CREATE TABLE t1 (a SET('ffff::ffff'), b INET6);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+SELECT b FROM t1;
+b
+ffff::ffff
+DROP TABLE t1;
+#
+# SET from INET6 to binary
+#
+CREATE TABLE t1 (a INET6, b BINARY(16));
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+SELECT HEX(b) FROM t1;
+HEX(b)
+FFFF000000000000000000000000FFFF
+DROP TABLE t1;
+CREATE TABLE t1 (a INET6, b VARBINARY(39));
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+SELECT HEX(b) FROM t1;
+HEX(b)
+FFFF000000000000000000000000FFFF
+DROP TABLE t1;
+CREATE TABLE t1 (a INET6, b BLOB);
+INSERT INTO t1 VALUES ('ffff::ffff', NULL);
+UPDATE t1 SET b=a;
+SELECT HEX(b) FROM t1;
+HEX(b)
+FFFF000000000000000000000000FFFF
+DROP TABLE t1;
+#
+# SET from binary to INET6
+#
+CREATE TABLE t1 (a BINARY(16), b INET6);
+INSERT INTO t1 VALUES (CONCAT(0xFFFF,REPEAT(0x0000,6),0xFFFF), NULL);
+UPDATE t1 SET b=a;
+SELECT b FROM t1;
+b
+ffff::ffff
+DROP TABLE t1;
+CREATE TABLE t1 (a VARBINARY(16), b INET6);
+INSERT INTO t1 VALUES (CONCAT(0xFFFF,REPEAT(0x0000,6),0xFFFF), NULL);
+UPDATE t1 SET b=a;
+SELECT b FROM t1;
+b
+ffff::ffff
+DROP TABLE t1;
+CREATE TABLE t1 (a BLOB, b INET6);
+INSERT INTO t1 VALUES (CONCAT(0xFFFF,REPEAT(0x0000,6),0xFFFF), NULL);
+UPDATE t1 SET b=a;
+SELECT b FROM t1;
+b
+ffff::ffff
+DROP TABLE t1;
+#
 # Limit clause parameter
 # TODO: this should fail.
 # The test for a valid data type should be moved
@@ -1515,4 +1884,96 @@ ALTER TABLE t1 MODIFY a BINARY(16);
 SELECT HEX(a) FROM t1;
 HEX(a)
 20010DB8000000000000FF0000428329
+DROP TABLE t1;
+#
+# MDEV-20795 CAST(inet6 AS BINARY) returns wrong result
+#
+CREATE OR REPLACE TABLE t1 (a INET6);
+INSERT INTO t1 VALUES ('2001:db8::ff00:42:8329');
+SELECT HEX(CAST(a AS BINARY)) FROM t1;
+HEX(CAST(a AS BINARY))
+20010DB8000000000000FF0000428329
+SELECT HEX(CAST(a AS BINARY(16))) FROM t1;
+HEX(CAST(a AS BINARY(16)))
+20010DB8000000000000FF0000428329
+DROP TABLE t1;
+#
+# MDEV-20808 CAST from INET6 to FLOAT does not produce an error
+#
+CREATE TABLE t1 (a INET6);
+INSERT INTO t1 VALUES ('::');
+SELECT CAST(a AS FLOAT) FROM t1;
+ERROR HY000: Illegal parameter data type inet6 for operation 'float_typecast'
+DROP TABLE t1;
+#
+# MDEV-20798 Conversion from INET6 to other types performed without errors or warnings
+#
+CREATE TABLE t1 (a INET6, b INT);
+INSERT INTO t1 (a) VALUES ('::');
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect integer value: '::' for column `test`.`t1`.`b` at row 1
+SELECT * FROM t1;
+a	b
+::	NULL
+DROP TABLE t1;
+SET timestamp=UNIX_TIMESTAMP('2001-01-01 10:20:30');
+CREATE TABLE t1 (a INET6, b TIMESTAMP);
+INSERT INTO t1 (a) VALUES ('::');
+UPDATE t1 SET b=a;
+ERROR 22007: Incorrect datetime value: '::' for column `test`.`t1`.`b` at row 1
+SELECT * FROM t1;
+a	b
+::	2001-01-01 10:20:30
+DROP TABLE t1;
+SET timestamp=DEFAULT;
+CREATE OR REPLACE TABLE t1 (a INET6);
+INSERT INTO t1 (a) VALUES ('::');
+ALTER TABLE t1 MODIFY a DATE;
+ERROR 22007: Incorrect date value: '::' for column `test`.`t1`.`a` at row 1
+DROP TABLE t1;
+#
+# MDEV-20818 ER_CRASHED_ON_USAGE or Assertion `length <= column->length' failed in write_block_record on temporary table
+#
+CREATE TABLE t1 (a INET6);
+SELECT
+CAST(a AS BINARY(0)),
+CAST(a AS BINARY(1)),
+CAST(a AS BINARY(16)),
+CAST(a AS BINARY(255)),
+CAST(a AS BINARY(256)),
+CAST(a AS BINARY(512)),
+CAST(a AS BINARY(513)),
+CAST(a AS BINARY(65532)),
+CAST(a AS BINARY(65533)),
+CAST(a AS BINARY(65534)),
+CAST(a AS BINARY(65535)),
+CAST(a AS BINARY(65536)),
+CAST(a AS BINARY(16777215)),
+CAST(a AS BINARY(16777216))
+FROM t1;
+Catalog	Database	Table	Table_alias	Column	Column_alias	Type	Length	Max length	Is_null	Flags	Decimals	Charsetnr
+def					CAST(a AS BINARY(0))	254	0	0	Y	128	0	63
+def					CAST(a AS BINARY(1))	254	1	0	Y	128	0	63
+def					CAST(a AS BINARY(16))	254	16	0	Y	128	0	63
+def					CAST(a AS BINARY(255))	254	255	0	Y	128	0	63
+def					CAST(a AS BINARY(256))	253	256	0	Y	128	0	63
+def					CAST(a AS BINARY(512))	253	512	0	Y	128	0	63
+def					CAST(a AS BINARY(513))	253	513	0	Y	128	0	63
+def					CAST(a AS BINARY(65532))	253	65532	0	Y	128	0	63
+def					CAST(a AS BINARY(65533))	252	65533	0	Y	128	0	63
+def					CAST(a AS BINARY(65534))	252	65534	0	Y	128	0	63
+def					CAST(a AS BINARY(65535))	252	65535	0	Y	128	0	63
+def					CAST(a AS BINARY(65536))	250	65536	0	Y	128	0	63
+def					CAST(a AS BINARY(16777215))	250	16777215	0	Y	128	0	63
+def					CAST(a AS BINARY(16777216))	251	16777216	0	Y	128	0	63
+CAST(a AS BINARY(0))	CAST(a AS BINARY(1))	CAST(a AS BINARY(16))	CAST(a AS BINARY(255))	CAST(a AS BINARY(256))	CAST(a AS BINARY(512))	CAST(a AS BINARY(513))	CAST(a AS BINARY(65532))	CAST(a AS BINARY(65533))	CAST(a AS BINARY(65534))	CAST(a AS BINARY(65535))	CAST(a AS BINARY(65536))	CAST(a AS BINARY(16777215))	CAST(a AS BINARY(16777216))
+DROP TABLE t1;
+#
+# MDEV-20826 Wrong result of MIN(inet6) with GROUP BY
+#
+CREATE TABLE t1 (id INT, a INET6) ENGINE=MyISAM;
+INSERT INTO t1 VALUES (1, 'fff::'),(1, '8888::');
+SELECT MIN(a), MAX(a) FROM t1 GROUP BY id;
+MIN(a)	MAX(a)
+fff::	8888::
 DROP TABLE t1;

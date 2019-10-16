@@ -111,13 +111,7 @@ int select_unit::send_data(List<Item> &values)
 {
   int rc= 0;
   int not_reported_error= 0;
-  if (unit->offset_limit_cnt)
-  {						// using limit offset,count
-    unit->offset_limit_cnt--;
-    return 0;
-  }
-  if (thd->killed == ABORT_QUERY)
-    return 0;
+
   if (table->no_rows_with_nulls)
     table->null_catch_flags= CHECK_ROW_FOR_NULLS_TO_REJECT;
 
@@ -607,14 +601,7 @@ int select_unit_ext::send_data(List<Item> &values)
   int rc= 0;
   int not_reported_error= 0;
   int find_res;
-  if (unit->offset_limit_cnt)
-  {
-    /* using limit offset,count */
-    unit->offset_limit_cnt--;
-    return 0;
-  }
-  if (thd->killed == ABORT_QUERY)
-    return 0;
+
   if (table->no_rows_with_nulls)
     table->null_catch_flags= CHECK_ROW_FOR_NULLS_TO_REJECT;
 
@@ -1102,7 +1089,6 @@ bool st_select_lex_unit::prepare_join(THD *thd_arg, SELECT_LEX *sl,
   can_skip_order_by= is_union_select && !(sl->braces && sl->explicit_limit);
 
   saved_error= join->prepare(sl->table_list.first,
-                             sl->with_wild,
                              (derived && derived->merged ? NULL : sl->where),
                              (can_skip_order_by ? 0 :
                               sl->order_list.elements) +
@@ -1116,8 +1102,6 @@ bool st_select_lex_unit::prepare_join(THD *thd_arg, SELECT_LEX *sl,
                               thd_arg->lex->proc_list.first),
                              sl, this);
 
-  /* There are no * in the statement anymore (for PS) */
-  sl->with_wild= 0;
   last_procedure= join->procedure;
 
   if (unlikely(saved_error || (saved_error= thd_arg->is_fatal_error)))
@@ -1358,8 +1342,7 @@ bool st_select_lex_unit::prepare(TABLE_LIST *derived_arg,
 	else
 	{
 	  sl->join->result= result;
-	  select_limit_cnt= HA_POS_ERROR;
-	  offset_limit_cnt= 0;
+          lim.set_unlimited();
 	  if (!sl->join->procedure &&
 	      result->prepare(sl->join->fields_list, this))
 	  {
@@ -1817,7 +1800,7 @@ cont:
          DBUG_RETURN(TRUE);
       }
       saved_error= fake_select_lex->join->
-        prepare(fake_select_lex->table_list.first, 0, 0,
+        prepare(fake_select_lex->table_list.first, 0,
                 global_parameters()->order_list.elements, // og_num
                 global_parameters()->order_list.first,    // order
                 false, NULL, NULL, NULL, fake_select_lex, this);
@@ -2046,7 +2029,7 @@ bool st_select_lex_unit::optimize()
       if (sl->tvc)
       {
 	sl->tvc->select_options=
-          (select_limit_cnt == HA_POS_ERROR || sl->braces) ?
+          (lim.is_unlimited() || sl->braces) ?
           sl->options & ~OPTION_FOUND_ROWS : sl->options | found_rows_for_union;
 	if (sl->tvc->optimize(thd))
         {
@@ -2066,13 +2049,13 @@ bool st_select_lex_unit::optimize()
         set_limit(sl);
 	if (sl == global_parameters() || describe)
 	{
-	  offset_limit_cnt= 0;
+          lim.remove_offset();
 	  /*
 	    We can't use LIMIT at this stage if we are using ORDER BY for the
 	    whole query
 	  */
 	  if (sl->order_list.first || describe)
-	    select_limit_cnt= HA_POS_ERROR;
+            lim.set_unlimited();
         }
 
         /*
@@ -2081,7 +2064,7 @@ bool st_select_lex_unit::optimize()
           Otherwise, SQL_CALC_FOUND_ROWS should be done on all sub parts.
         */
         sl->join->select_options=
-          (select_limit_cnt == HA_POS_ERROR || sl->braces) ?
+          (lim.is_unlimited() || sl->braces) ?
           sl->options & ~OPTION_FOUND_ROWS : sl->options | found_rows_for_union;
 
 	saved_error= sl->join->optimize();
@@ -2161,13 +2144,13 @@ bool st_select_lex_unit::exec()
         set_limit(sl);
 	if (sl == global_parameters() || describe)
 	{
-	  offset_limit_cnt= 0;
+	  lim.remove_offset();
 	  /*
 	    We can't use LIMIT at this stage if we are using ORDER BY for the
 	    whole query
 	  */
 	  if (sl->order_list.first || describe)
-	    select_limit_cnt= HA_POS_ERROR;
+	    lim.set_unlimited();
         }
 
         /*
@@ -2178,14 +2161,14 @@ bool st_select_lex_unit::exec()
 	if (sl->tvc)
 	{
 	  sl->tvc->select_options=
-             (select_limit_cnt == HA_POS_ERROR || sl->braces) ?
+             (lim.is_unlimited() || sl->braces) ?
              sl->options & ~OPTION_FOUND_ROWS : sl->options | found_rows_for_union;
 	  saved_error= sl->tvc->optimize(thd);
 	}
 	else
 	{
           sl->join->select_options=
-            (select_limit_cnt == HA_POS_ERROR || sl->braces) ?
+            (lim.is_unlimited() || sl->braces) ?
             sl->options & ~OPTION_FOUND_ROWS : sl->options | found_rows_for_union;
 	  saved_error= sl->join->optimize();
 	}
@@ -2208,9 +2191,6 @@ bool st_select_lex_unit::exec()
 	}
 	if (!sl->tvc)
 	  saved_error= sl->join->error;
-	offset_limit_cnt= (ha_rows)(sl->offset_limit ?
-                                    sl->offset_limit->val_uint() :
-                                    0);
 	if (likely(!saved_error))
 	{
 	  examined_rows+= thd->get_examined_row_count();
@@ -2237,8 +2217,8 @@ bool st_select_lex_unit::exec()
           DBUG_RETURN(1);
         }
       }
-      if (found_rows_for_union && !sl->braces && 
-          select_limit_cnt != HA_POS_ERROR)
+      if (found_rows_for_union && !sl->braces &&
+          !lim.is_unlimited())
       {
 	/*
 	  This is a union without braces. Remember the number of rows that
@@ -2324,14 +2304,13 @@ bool st_select_lex_unit::exec()
         if (!was_executed)
           save_union_explain_part2(thd->lex->explain);
 
-        saved_error= mysql_select(thd,
-                              &result_table_list,
-                              0, item_list, NULL,
+        saved_error= mysql_select(thd, &result_table_list,
+                                  item_list, NULL,
 				  global_parameters()->order_list.elements,
 				  global_parameters()->order_list.first,
-                              NULL, NULL, NULL,
-                              fake_select_lex->options | SELECT_NO_UNLOCK,
-                              result, this, fake_select_lex);
+                                  NULL, NULL, NULL,
+                                  fake_select_lex->options | SELECT_NO_UNLOCK,
+                                  result, this, fake_select_lex);
       }
       else
       {
@@ -2347,14 +2326,12 @@ bool st_select_lex_unit::exec()
             to reset them back, we re-do all of the actions (yes it is ugly):
           */ // psergey-todo: is the above really necessary anymore?? 
 	  join->init(thd, item_list, fake_select_lex->options, result);
-          saved_error= mysql_select(thd,
-                                &result_table_list,
-                                0, item_list, NULL,
+          saved_error= mysql_select(thd, &result_table_list, item_list, NULL,
 				    global_parameters()->order_list.elements,
 				    global_parameters()->order_list.first,
-                                NULL, NULL, NULL,
-                                fake_select_lex->options | SELECT_NO_UNLOCK,
-                                result, this, fake_select_lex);
+                                    NULL, NULL, NULL,
+                                    fake_select_lex->options | SELECT_NO_UNLOCK,
+                                    result, this, fake_select_lex);
         }
         else
         {

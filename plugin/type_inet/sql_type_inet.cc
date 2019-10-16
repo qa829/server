@@ -609,9 +609,10 @@ class Field_inet6: public Field
                      Sql_condition::enum_warning_level level)
   {
     static const Name type_name= type_handler_inet6.name();
-    get_thd()->push_warning_truncated_value_for_field(level, type_name.ptr(),
-                                                      str.ptr(), table->s,
-                                                      field_name.str);
+    if (get_thd()->count_cuted_fields > CHECK_FIELD_EXPRESSION)
+      get_thd()->push_warning_truncated_value_for_field(level, type_name.ptr(),
+                                                        str.ptr(), table->s,
+                                                        field_name.str);
   }
   int set_null_with_warn(const ErrConv &str)
   {
@@ -630,6 +631,16 @@ class Field_inet6: public Field
     store_warning(str, Sql_condition::WARN_LEVEL_WARN);
     set_max_value((char*) ptr);
     return 1;
+  }
+  int store_inet6_null_with_warn(const Inet6_null &inet6,
+                                 const ErrConvString &err)
+  {
+    DBUG_ASSERT(marked_for_write_or_computed());
+    if (inet6.is_null())
+      return maybe_null() ? set_null_with_warn(err) :
+                            set_min_value_with_warn(err);
+    inet6.to_binary((char *) ptr, Inet6::binary_length());
+    return 0;
   }
 
 public:
@@ -749,23 +760,26 @@ public:
 
   int store(const char *str, size_t length, CHARSET_INFO *cs) override
   {
-    DBUG_ASSERT(marked_for_write_or_computed());
-    Inet6_null tmp= cs == &my_charset_bin ?
-                    Inet6_null(str, length) :
-                    Inet6_null(str, length, cs);
-    if (tmp.is_null())
-    {
-      return maybe_null() ?
-             set_null_with_warn(ErrConvString(str, length, cs)) :
-             set_min_value_with_warn(ErrConvString(str, length, cs));
-    }
-    tmp.to_binary((char *) ptr, Inet6::binary_length());
-    return 0;
+    return cs == &my_charset_bin ? store_binary(str, length) :
+                                   store_text(str, length, cs);
+  }
+
+  int store_text(const char *str, size_t length, CHARSET_INFO *cs) override
+  {
+    return store_inet6_null_with_warn(Inet6_null(str, length, cs),
+                                      ErrConvString(str, length, cs));
+  }
+
+  int store_binary(const char *str, size_t length) override
+  {
+    return store_inet6_null_with_warn(Inet6_null(str, length),
+                                      ErrConvString(str, length,
+                                                    &my_charset_bin));
   }
 
   int store_hex_hybrid(const char *str, size_t length) override
   {
-    return store(str, length, &my_charset_bin);
+    return Field_inet6::store_binary(str, length);
   }
 
   int store_decimal(const my_decimal *num) override
@@ -802,23 +816,15 @@ public:
   int save_in_field(Field *to) override
   {
     // INSERT INTO t2 (different_field_type) SELECT inet6_field FROM t1;
-    switch (to->cmp_type()) {
-    case INT_RESULT:
-    case REAL_RESULT:
-    case DECIMAL_RESULT:
-    case TIME_RESULT:
+    if (to->charset() == &my_charset_bin &&
+        dynamic_cast<const Type_handler_general_purpose_string*>
+          (to->type_handler()))
     {
-      my_decimal buff;
-      return to->store_decimal(val_decimal(&buff));
+      NativeBufferInet6 res;
+      val_native(&res);
+      return to->store(res.ptr(), res.length(), &my_charset_bin);
     }
-    case STRING_RESULT:
-      return save_in_field_str(to);
-    case ROW_RESULT:
-      break;
-    }
-    DBUG_ASSERT(0);
-    to->reset();
-    return 0;
+    return save_in_field_str(to);
   }
   Copy_func *get_copy_func(const Field *from) const override
   {
@@ -1216,6 +1222,50 @@ public:
 };
 
 
+class Item_char_typecast_func_handler_inet6_to_binary:
+                                       public Item_handled_func::Handler_str
+{
+public:
+  const Type_handler *return_type_handler(const Item_handled_func *item)
+                                          const override
+  {
+    if (item->max_length > MAX_FIELD_VARCHARLENGTH)
+      return Type_handler::blob_type_handler(item->max_length);
+    if (item->max_length > 255)
+      return &type_handler_varchar;
+    return &type_handler_string;
+  }
+  bool fix_length_and_dec(Item_handled_func *xitem) const override
+  {
+    return false;
+  }
+  String *val_str(Item_handled_func *item, String *to) const override
+  {
+    DBUG_ASSERT(dynamic_cast<const Item_char_typecast*>(item));
+    return static_cast<Item_char_typecast*>(item)->
+             val_str_binary_from_native(to);
+  }
+};
+
+
+static Item_char_typecast_func_handler_inet6_to_binary
+         item_char_typecast_func_handler_inet6_to_binary;
+
+
+bool Type_handler_inet6::
+  Item_char_typecast_fix_length_and_dec(Item_char_typecast *item) const
+{
+  if (item->cast_charset() == &my_charset_bin)
+  {
+    item->fix_length_and_dec_native_to_binary(Inet6::binary_length());
+    item->set_func_handler(&item_char_typecast_func_handler_inet6_to_binary);
+    return false;
+  }
+  item->fix_length_and_dec_str();
+  return false;
+}
+
+
 bool
 Type_handler_inet6::character_or_binary_string_to_native(THD *thd,
                                                          const String *str,
@@ -1396,6 +1446,40 @@ Field *Type_handler_inet6::make_conversion_table_field(MEM_ROOT *root,
 {
   const Record_addr tmp(NULL, Bit_addr(true));
   return new (table->in_use->mem_root) Field_inet6(&empty_clex_str, tmp);
+}
+
+
+bool Type_handler_inet6::partition_field_check(const LEX_CSTRING &field_name,
+                                               Item *item_expr) const
+{
+  if (item_expr->cmp_type() != STRING_RESULT)
+  {
+    my_error(ER_WRONG_TYPE_COLUMN_VALUE_ERROR, MYF(0));
+    return true;
+  }
+  return false;
+}
+
+
+bool
+Type_handler_inet6::partition_field_append_value(
+                                          String *to,
+                                          Item *item_expr,
+                                          CHARSET_INFO *field_cs,
+                                          partition_value_print_mode_t mode)
+                                          const
+{
+  StringBufferInet6 inet6str;
+  Inet6_null inet6(item_expr);
+  if (inet6.is_null())
+  {
+    my_error(ER_PARTITION_FUNCTION_IS_NOT_ALLOWED, MYF(0));
+    return true;
+  }
+  return inet6.to_string(&inet6str) ||
+         to->append('\'') ||
+         to->append(inet6str) ||
+         to->append('\'');
 }
 
 

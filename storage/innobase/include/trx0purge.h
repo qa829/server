@@ -61,7 +61,8 @@ trx_purge(
 /*======*/
 	ulint	n_purge_threads,	/*!< in: number of purge tasks to
 					submit to task queue. */
-	bool	truncate);		/*!< in: truncate history if true */
+	bool	truncate		/*!< in: truncate history if true */
+);
 
 /** Rollback segements from a given transaction with trx-no
 scheduled for purge. */

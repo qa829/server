@@ -1006,6 +1006,8 @@ bool my_yyoverflow(short **a, YYSTYPE **b, size_t *yystacksize);
 %token  <kwd> GOTO_ORACLE_SYM               /* Oracle-R   */
 %token  <kwd> GRANT                         /* SQL-2003-R */
 %token  <kwd> GROUP_CONCAT_SYM
+%token  <rwd> JSON_ARRAYAGG_SYM
+%token  <rwd> JSON_OBJECTAGG_SYM
 %token  <kwd> GROUP_SYM                     /* SQL-2003-R */
 %token  <kwd> HAVING                        /* SQL-2003-R */
 %token  <kwd> HOUR_MICROSECOND_SYM
@@ -1901,6 +1903,7 @@ bool my_yyoverflow(short **a, YYSTYPE **b, size_t *yystacksize);
 
 %type <lock_type>
         replace_lock_option opt_low_priority insert_lock_option load_data_lock
+        insert_replace_option
 
 %type <item>
         literal insert_ident order_ident temporal_literal
@@ -2068,7 +2071,7 @@ bool my_yyoverflow(short **a, YYSTYPE **b, size_t *yystacksize);
 %type <NONE>
         analyze_stmt_command backup backup_statements
         query verb_clause create change select select_into
-        do drop insert replace insert2
+        do drop insert replace insert_start stmt_end
         insert_values update delete truncate rename compound_statement
         show describe load alter optimize keycache preload flush
         reset purge begin_stmt_mariadb commit rollback savepoint release
@@ -2078,7 +2081,7 @@ bool my_yyoverflow(short **a, YYSTYPE **b, size_t *yystacksize);
         opt_persistent_stat_clause persistent_stat_spec
         persistent_column_stat_spec persistent_index_stat_spec
         table_column_list table_index_list table_index_name
-        check start checksum
+        check start checksum opt_returning
         field_list field_list_item kill key_def constraint_def
         keycache_list keycache_list_or_parts assign_to_keycache
         assign_to_keycache_parts
@@ -5321,7 +5324,7 @@ opt_create_partitioning:
 /*
  This part of the parser is about handling of the partition information.
 
- It's first version was written by Mikael Ronstrm with lots of answers to
+ Its first version was written by Mikael Ronström with lots of answers to
  questions provided by Antony Curtis.
 
  The partition grammar can be called from three places.
@@ -7893,10 +7896,7 @@ alter:
 
             lex->sql_command= SQLCOM_ALTER_PROCEDURE;
             lex->spname= $3;
-            Lex->pop_select(); //main select
-            if (Lex->check_main_unit_semantics())
-              MYSQL_YYABORT;
-          }
+          } stmt_end {}
         | ALTER FUNCTION_SYM sp_name
           {
             LEX *lex= Lex;
@@ -7913,10 +7913,7 @@ alter:
 
             lex->sql_command= SQLCOM_ALTER_FUNCTION;
             lex->spname= $3;
-            Lex->pop_select(); //main select
-            if (Lex->check_main_unit_semantics())
-              MYSQL_YYABORT;
-          }
+          } stmt_end {}
         | ALTER view_algorithm definer_opt opt_view_suid VIEW_SYM table_ident
           {
             if (Lex->main_select_push())
@@ -7924,12 +7921,7 @@ alter:
             if (Lex->add_alter_view(thd, $2, $4, $6))
               MYSQL_YYABORT;
           }
-          view_list_opt AS view_select
-          {
-            Lex->pop_select(); //main select
-            if (Lex->check_main_unit_semantics())
-              MYSQL_YYABORT;
-          }
+          view_list_opt AS view_select stmt_end {}
         | ALTER definer_opt opt_view_suid VIEW_SYM table_ident
           /*
             We have two separate rules for ALTER VIEW rather that
@@ -7942,12 +7934,7 @@ alter:
             if (Lex->add_alter_view(thd, VIEW_ALGORITHM_INHERIT, $3, $5))
               MYSQL_YYABORT;
           }
-          view_list_opt AS view_select
-          {
-            Lex->pop_select(); //main select
-            if (Lex->check_main_unit_semantics())
-              MYSQL_YYABORT;
-          }
+          view_list_opt AS view_select stmt_end {}
         | ALTER definer_opt remember_name EVENT_SYM sp_name
           {
             if (Lex->main_select_push())
@@ -8048,10 +8035,7 @@ alter:
             Lex->m_sql_cmd= new (thd->mem_root) Sql_cmd_alter_sequence($3);
             if (unlikely(Lex->m_sql_cmd == NULL))
               MYSQL_YYABORT;
-            Lex->pop_select(); //main select
-            if (Lex->check_main_unit_semantics())
-              MYSQL_YYABORT;
-          }
+          } stmt_end {}
         ;
 
 opt_account_locking:
@@ -9284,8 +9268,7 @@ query_specification_start:
           {
             SELECT_LEX *sel;
             LEX *lex= Lex;
-            if (!(sel= lex->alloc_select(TRUE)) ||
-                  lex->push_select(sel))
+            if (!(sel= lex->alloc_select(TRUE)) || lex->push_select(sel))
               MYSQL_YYABORT;
             sel->init_select();
             sel->braces= FALSE;
@@ -11524,6 +11507,49 @@ sum_expr:
             $5->empty();
             sel->gorder_list.empty();
           }
+        | JSON_ARRAYAGG_SYM '(' opt_distinct
+          { Select->in_sum_expr++; }
+          expr_list opt_gorder_clause opt_glimit_clause
+          ')'
+          {
+            SELECT_LEX *sel= Select;
+            List<Item> *args= $5;
+            sel->in_sum_expr--;
+            if (args && args->elements > 1)
+            {
+              /* JSON_ARRAYAGG supports only one parameter */
+              my_error(ER_WRONG_PARAMCOUNT_TO_NATIVE_FCT, MYF(0), "JSON_ARRAYAGG");
+              MYSQL_YYABORT;
+            }
+            String* s= new (thd->mem_root) String(",", 1, &my_charset_latin1);
+            if (unlikely(s == NULL))
+              MYSQL_YYABORT;
+
+            $$= new (thd->mem_root)
+                  Item_func_json_arrayagg(thd, Lex->current_context(),
+                                          $3, args,
+                                          sel->gorder_list, s, $7,
+                                          sel->select_limit,
+                                          sel->offset_limit);
+            if (unlikely($$ == NULL))
+              MYSQL_YYABORT;
+            sel->select_limit= NULL;
+            sel->offset_limit= NULL;
+            sel->explicit_limit= 0;
+            $5->empty();
+            sel->gorder_list.empty();
+          }
+        | JSON_OBJECTAGG_SYM '('
+          { Select->in_sum_expr++; }
+          expr ',' expr ')'
+          {
+            SELECT_LEX *sel= Select;
+            sel->in_sum_expr--;
+
+            $$= new (thd->mem_root) Item_func_json_objectagg(thd, $4, $6);
+            if (unlikely($$ == NULL))
+              MYSQL_YYABORT;
+          }
         ;
 
 window_func_expr:
@@ -13463,51 +13489,45 @@ opt_temporary:
 insert:
           INSERT
           {
-            LEX *lex= Lex;
-            lex->sql_command= SQLCOM_INSERT;
-            lex->duplicates= DUP_ERROR;
-            if (Lex->main_select_push())
-              MYSQL_YYABORT;
-            mysql_init_select(lex);
-            lex->current_select->parsing_place= BEFORE_OPT_LIST;
+            Lex->sql_command= SQLCOM_INSERT;
+            Lex->duplicates= DUP_ERROR;
           }
-          insert_lock_option
-          opt_ignore insert2
+          insert_start insert_lock_option opt_ignore opt_into insert_table
           {
-            Select->set_lock_for_tables($3, true);
-            Lex->current_select= Lex->first_select_lex();
+            Select->set_lock_for_tables($4, true);
           }
-          insert_field_spec opt_insert_update
-          {
-            Lex->pop_select(); //main select
-            if (Lex->check_main_unit_semantics())
-              MYSQL_YYABORT;
-          }
-        ;
+          insert_field_spec opt_insert_update opt_returning
+          stmt_end {}
+          ;
 
 replace:
           REPLACE
           {
-            LEX *lex=Lex;
-            lex->sql_command = SQLCOM_REPLACE;
-            lex->duplicates= DUP_REPLACE;
-            if (Lex->main_select_push())
-              MYSQL_YYABORT;
-            mysql_init_select(lex);
-            lex->current_select->parsing_place= BEFORE_OPT_LIST;
+            Lex->sql_command = SQLCOM_REPLACE;
+            Lex->duplicates= DUP_REPLACE;
           }
-          replace_lock_option insert2
+          insert_start replace_lock_option opt_into insert_table
           {
-            Select->set_lock_for_tables($3, true);
-            Lex->current_select= Lex->first_select_lex();
+            Select->set_lock_for_tables($4, true);
           }
-          insert_field_spec
-          {
-            Lex->pop_select(); //main select
-            if (Lex->check_main_unit_semantics())
-              MYSQL_YYABORT;
-          }
-        ;
+          insert_field_spec opt_returning
+          stmt_end {}
+          ;
+
+insert_start: {
+                if (Lex->main_select_push())
+                  MYSQL_YYABORT;
+                mysql_init_select(Lex);
+                Lex->current_select->parsing_place= BEFORE_OPT_LIST;
+              }
+              ;
+
+stmt_end: {
+              Lex->pop_select(); //main select
+              if (Lex->check_main_unit_semantics())
+                MYSQL_YYABORT;
+            }
+            ;
 
 insert_lock_option:
           /* empty */
@@ -13519,19 +13539,17 @@ insert_lock_option:
             */
             $$= (Lex->sphead ? TL_WRITE_DEFAULT : TL_WRITE_CONCURRENT_INSERT);
           }
-        | LOW_PRIORITY  { $$= TL_WRITE_LOW_PRIORITY; }
-        | DELAYED_SYM
-        {
-         // QQ: why was +1?
-          Lex->keyword_delayed_begin_offset= (uint)($1.pos() - thd->query());
-          Lex->keyword_delayed_end_offset= (uint)($1.end() - thd->query());
-          $$= TL_WRITE_DELAYED;
-        }
+        | insert_replace_option
         | HIGH_PRIORITY { $$= TL_WRITE; }
         ;
 
 replace_lock_option:
-          opt_low_priority { $$= $1; }
+          /* empty */ { $$= TL_WRITE_DEFAULT; }
+        | insert_replace_option
+        ;
+
+insert_replace_option:
+          LOW_PRIORITY  { $$= TL_WRITE_LOW_PRIORITY; }
         | DELAYED_SYM
         {
           Lex->keyword_delayed_begin_offset= (uint)($1.pos() - thd->query());
@@ -13540,10 +13558,7 @@ replace_lock_option:
         }
         ;
 
-insert2:
-          INTO insert_table {}
-        | insert_table {}
-        ;
+opt_into: /* nothing */ | INTO ;
 
 insert_table:
           {
@@ -13792,10 +13807,7 @@ update:
           {
             if ($10)
               Select->order_list= *($10);
-            Lex->pop_select(); //main select
-            if (Lex->check_main_unit_semantics())
-              MYSQL_YYABORT;
-          }
+          } stmt_end {}
         ;
 
 update_list:
@@ -13899,7 +13911,7 @@ single_multi:
           opt_where_clause
           opt_order_clause
           delete_limit_clause
-          opt_select_expressions 
+          opt_returning
           {
             if ($3)
               Select->order_list= *($3);
@@ -13915,10 +13927,7 @@ single_multi:
           {
             if (unlikely(multi_delete_set_locks_and_link_aux_tables(Lex)))
               MYSQL_YYABORT;
-            Lex->pop_select(); //main select
-            if (Lex->check_main_unit_semantics())
-              MYSQL_YYABORT;
-          }
+          } stmt_end {}
         | FROM table_alias_ref_list
           {
             mysql_init_multi_delete(Lex);
@@ -13929,15 +13938,31 @@ single_multi:
           {
             if (unlikely(multi_delete_set_locks_and_link_aux_tables(Lex)))
               MYSQL_YYABORT;
-            Lex->pop_select(); //main select
-            if (Lex->check_main_unit_semantics())
-              MYSQL_YYABORT;
-          }
+          } stmt_end {}
         ;
 
-opt_select_expressions:
-          /* empty */ 
-        | RETURNING_SYM select_item_list 
+opt_returning:
+          /* empty */
+          {
+            DBUG_ASSERT(!Lex->has_returning());
+          }
+        | RETURNING_SYM
+          {
+            DBUG_ASSERT(!Lex->has_returning());
+            if (($<num>$= (Select != Lex->returning())))
+            {
+              SELECT_LEX *sl= Lex->returning();
+              sl->set_master_unit(0);
+              Select->add_slave(Lex->create_unit(sl));
+              sl->include_global((st_select_lex_node**)&Lex->all_selects_list);
+              Lex->push_select(sl);
+            }
+          }
+          select_item_list
+          {
+            if ($<num>2)
+              Lex->pop_select();
+          }
         ;
 
 table_wild_list:
@@ -14997,11 +15022,7 @@ load:
           opt_xml_rows_identified_by
           opt_field_term opt_line_term opt_ignore_lines opt_field_or_var_spec
           opt_load_data_set_spec
-          {
-            Lex->pop_select(); //main select
-            if (Lex->check_main_unit_semantics())
-              MYSQL_YYABORT;
-          }
+          stmt_end {}
           ;
 
 data_or_xml:
@@ -16675,11 +16696,7 @@ set:
             lex->set_stmt_init();
           }
           set_param
-          {
-            Lex->pop_select(); //main select
-            if (Lex->check_main_unit_semantics())
-              MYSQL_YYABORT;
-          }
+          stmt_end {}
         ;
 
 set_param:

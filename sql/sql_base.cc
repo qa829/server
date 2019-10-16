@@ -3925,32 +3925,6 @@ open_and_process_table(THD *thd, TABLE_LIST *tables, uint *counter, uint flags,
     goto end;
   }
 
-  if (get_use_stat_tables_mode(thd) > NEVER && tables->table)
-  {
-    TABLE_SHARE *table_share= tables->table->s;
-    if (table_share && table_share->table_category == TABLE_CATEGORY_USER &&
-        table_share->tmp_table == NO_TMP_TABLE)
-    {
-      if (table_share->stats_cb.stats_can_be_read ||
-	  !alloc_statistics_for_table_share(thd, table_share, FALSE))
-      {
-        if (table_share->stats_cb.stats_can_be_read)
-        {   
-          KEY *key_info= table_share->key_info;
-          KEY *key_info_end= key_info + table_share->keys;
-          KEY *table_key_info= tables->table->key_info;
-          for ( ; key_info < key_info_end; key_info++, table_key_info++)
-            table_key_info->read_stats= key_info->read_stats;
-          Field **field_ptr= table_share->field;
-          Field **table_field_ptr= tables->table->field;
-          for ( ; *field_ptr; field_ptr++, table_field_ptr++)
-            (*table_field_ptr)->read_stats= (*field_ptr)->read_stats;
-          tables->table->stats_is_read= table_share->stats_cb.stats_is_read;
-        }
-      }	
-    }
-  }
-
 process_view_routines:
   /*
     Again we may need cache all routines used by this view and add
@@ -7485,16 +7459,15 @@ static bool setup_natural_join_row_types(THD *thd,
 ****************************************************************************/
 
 int setup_wild(THD *thd, TABLE_LIST *tables, List<Item> &fields,
-	       List<Item> *sum_func_list,
-	       uint wild_num, uint *hidden_bit_fields)
+	       List<Item> *sum_func_list, SELECT_LEX *select_lex)
 {
-  if (!wild_num)
-    return(0);
-
   Item *item;
   List_iterator<Item> it(fields);
   Query_arena *arena, backup;
   DBUG_ENTER("setup_wild");
+
+  if (!select_lex->with_wild)
+    DBUG_RETURN(0);
 
   /*
     Don't use arena if we are not in prepared statements or stored procedures
@@ -7503,7 +7476,7 @@ int setup_wild(THD *thd, TABLE_LIST *tables, List<Item> &fields,
   arena= thd->activate_stmt_arena_if_needed(&backup);
 
   thd->lex->current_select->cur_pos_in_select_list= 0;
-  while (wild_num && (item= it++))
+  while (select_lex->with_wild && (item= it++))
   {
     if (item->type() == Item::FIELD_ITEM &&
         ((Item_field*) item)->field_name.str == star_clex_str.str &&
@@ -7526,7 +7499,7 @@ int setup_wild(THD *thd, TABLE_LIST *tables, List<Item> &fields,
       else if (insert_fields(thd, ((Item_field*) item)->context,
                              ((Item_field*) item)->db_name.str,
                              ((Item_field*) item)->table_name.str, &it,
-                             any_privileges, hidden_bit_fields))
+                             any_privileges, &select_lex->hidden_bit_fields))
       {
 	if (arena)
 	  thd->restore_active_arena(arena, &backup);
@@ -7541,30 +7514,15 @@ int setup_wild(THD *thd, TABLE_LIST *tables, List<Item> &fields,
 	*/
 	sum_func_list->elements+= fields.elements - elem;
       }
-      wild_num--;
+      select_lex->with_wild--;
     }
     else
       thd->lex->current_select->cur_pos_in_select_list++;
   }
+  DBUG_ASSERT(!select_lex->with_wild);
   thd->lex->current_select->cur_pos_in_select_list= UNDEF_POS;
   if (arena)
-  {
-    /* make * substituting permanent */
-    SELECT_LEX *select_lex= thd->lex->current_select;
-    select_lex->with_wild= 0;
-#ifdef HAVE_valgrind
-    if (&select_lex->item_list != &fields)      // Avoid warning
-#endif
-    /*   
-      The assignment below is translated to memcpy() call (at least on some
-      platforms). memcpy() expects that source and destination areas do not
-      overlap. That problem was detected by valgrind. 
-    */
-    if (&select_lex->item_list != &fields)
-      select_lex->item_list= fields;
-
     thd->restore_active_arena(arena, &backup);
-  }
   DBUG_RETURN(0);
 }
 
@@ -7670,6 +7628,26 @@ bool setup_fields(THD *thd, Ref_ptr_array ref_pointer_array,
   thd->column_usage= saved_column_usage;
   DBUG_PRINT("info", ("thd->column_usage: %d", thd->column_usage));
   DBUG_RETURN(MY_TEST(thd->is_error()));
+}
+
+
+/*
+  Perform checks like all given fields exists, if exists fill struct with
+  current data and expand all '*' in given fields for LEX::returning.
+
+  SYNOPSIS
+     thd                 Thread handler
+     table_list          Global/local table list
+*/
+
+int setup_returning_fields(THD* thd, TABLE_LIST* table_list)
+{
+  if (!thd->lex->has_returning())
+    return 0;
+  return setup_wild(thd, table_list, thd->lex->returning()->item_list, NULL,
+                    thd->lex->returning())
+      || setup_fields(thd, Ref_ptr_array(), thd->lex->returning()->item_list,
+                      MARK_COLUMNS_READ, NULL, NULL, false);
 }
 
 

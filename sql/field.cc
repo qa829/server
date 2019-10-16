@@ -58,7 +58,7 @@ const char field_separator=',';
                         ((ulong) ((1LL << MY_MIN(arg, 4) * 8) - 1))
 
 // Column marked for read or the field set to read out or record[0] or [1]
-inline bool Field::marked_for_read() const
+bool Field::marked_for_read() const
 {
   return !table ||
          (!table->read_set ||
@@ -73,7 +73,7 @@ inline bool Field::marked_for_read() const
   changed fields with DBUG_FIX_WRITE_SET() in table.cc
 */
 
-inline bool Field::marked_for_write_or_computed() const
+bool Field::marked_for_write_or_computed() const
 {
   return (!table ||
           (!table->write_set ||
@@ -1887,13 +1887,16 @@ bool Field::compatible_field_size(uint field_metadata,
 int Field::store(const char *to, size_t length, CHARSET_INFO *cs,
                  enum_check_fields check_level)
 {
-  int res;
-  THD *thd= get_thd();
-  enum_check_fields old_check_level= thd->count_cuted_fields;
-  thd->count_cuted_fields= check_level;
-  res= store(to, length, cs);
-  thd->count_cuted_fields= old_check_level;
-  return res;
+  Check_level_instant_set tmp_level(get_thd(), check_level);
+  return store(to, length, cs);
+}
+
+
+int Field::store_text(const char *to, size_t length, CHARSET_INFO *cs,
+                      enum_check_fields check_level)
+{
+  Check_level_instant_set tmp_level(get_thd(), check_level);
+  return store_text(to, length, cs);
 }
 
 

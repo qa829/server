@@ -21,9 +21,6 @@
 #include <stdarg.h>
 #include <my_getopt.h>
 #include <my_bit.h>
-#ifdef HAVE_SYS_MMAN_H
-#include <sys/mman.h>
-#endif
 
 static uint decode_bits;
 static char **default_argv;
@@ -473,11 +470,10 @@ TYPELIB myisam_stats_method_typelib= {
 	 /* Read options */
 
 static my_bool
-get_one_option(int optid,
-	       const struct my_option *opt __attribute__((unused)),
-	       char *argument)
+get_one_option(const struct my_option *opt,
+	       char *argument, const char *filename __attribute__((unused)))
 {
-  switch (optid) {
+  switch (opt->id) {
   case 'a':
     if (argument == disabled_my_option)
       check_param.testflag&= ~T_STATISTICS;

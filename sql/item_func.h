@@ -466,8 +466,46 @@ public:
     virtual longlong val_int(Item_handled_func *) const= 0;
     virtual my_decimal *val_decimal(Item_handled_func *, my_decimal *) const= 0;
     virtual bool get_date(THD *thd, Item_handled_func *, MYSQL_TIME *, date_mode_t fuzzydate) const= 0;
-    virtual const Type_handler *return_type_handler() const= 0;
+    virtual const Type_handler *
+      return_type_handler(const Item_handled_func *item) const= 0;
+    virtual const Type_handler *
+      type_handler_for_create_select(const Item_handled_func *item) const
+    {
+      return return_type_handler(item);
+    }
     virtual bool fix_length_and_dec(Item_handled_func *) const= 0;
+  };
+
+  class Handler_str: public Handler
+  {
+  public:
+    String *val_str_ascii(Item_handled_func *item, String *str) const
+    {
+      return item->Item::val_str_ascii(str);
+    }
+    double val_real(Item_handled_func *item) const
+    {
+      DBUG_ASSERT(item->is_fixed());
+      StringBuffer<64> tmp;
+      String *res= item->val_str(&tmp);
+      return res ? item->double_from_string_with_check(res) : 0.0;
+    }
+    longlong val_int(Item_handled_func *item) const
+    {
+      DBUG_ASSERT(item->is_fixed());
+      StringBuffer<22> tmp;
+      String *res= item->val_str(&tmp);
+      return res ? item->longlong_from_string_with_check(res) : 0;
+    }
+    my_decimal *val_decimal(Item_handled_func *item, my_decimal *to) const
+    {
+      return item->val_decimal_from_string(to);
+    }
+    bool get_date(THD *thd, Item_handled_func *item, MYSQL_TIME *to,
+                  date_mode_t fuzzydate) const
+    {
+      return item->get_date_from_string(thd, to, fuzzydate);
+    }
   };
 
   /**
@@ -492,9 +530,14 @@ public:
   class Handler_temporal_string: public Handler_temporal
   {
   public:
-    const Type_handler *return_type_handler() const
+    const Type_handler *return_type_handler(const Item_handled_func *) const
     {
       return &type_handler_string;
+    }
+    const Type_handler *
+      type_handler_for_create_select(const Item_handled_func *item) const
+    {
+      return return_type_handler(item)->type_handler_for_tmp_table(item);
     }
     double val_real(Item_handled_func *item) const
     {
@@ -518,7 +561,7 @@ public:
   class Handler_date: public Handler_temporal
   {
   public:
-    const Type_handler *return_type_handler() const
+    const Type_handler *return_type_handler(const Item_handled_func *) const
     {
       return &type_handler_newdate;
     }
@@ -549,7 +592,7 @@ public:
   class Handler_time: public Handler_temporal
   {
   public:
-    const Type_handler *return_type_handler() const
+    const Type_handler *return_type_handler(const Item_handled_func *) const
     {
       return &type_handler_time2;
     }
@@ -575,7 +618,7 @@ public:
   class Handler_datetime: public Handler_temporal
   {
   public:
-    const Type_handler *return_type_handler() const
+    const Type_handler *return_type_handler(const Item_handled_func *) const
     {
       return &type_handler_datetime2;
     }
@@ -611,7 +654,15 @@ public:
   }
   const Type_handler *type_handler() const
   {
-    return m_func_handler->return_type_handler();
+    return m_func_handler->return_type_handler(this);
+  }
+  Field *create_field_for_create_select(MEM_ROOT *root, TABLE *table)
+  {
+    DBUG_ASSERT(fixed);
+    const Type_handler *h= m_func_handler->type_handler_for_create_select(this);
+    return h->make_and_init_table_field(root, &name,
+                                        Record_addr(maybe_null),
+                                        *this, table);
   }
   String *val_str(String *to)
   {
@@ -2732,7 +2783,12 @@ public:
     :Item_hybrid_func(thd, item),
     m_var_entry(item->m_var_entry), name(item->name) { }
   Field *create_tmp_field_ex(MEM_ROOT *root, TABLE *table, Tmp_field_src *src,
-                             const Tmp_field_param *param);
+                             const Tmp_field_param *param)
+  {
+    DBUG_ASSERT(fixed);
+    return create_tmp_field_ex_from_handler(root, table, src, param,
+                                            type_handler());
+  }
   Field *create_field_for_create_select(MEM_ROOT *root, TABLE *table)
   { return create_table_field_from_handler(root, table); }
   bool check_vcol_func_processor(void *arg);

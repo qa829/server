@@ -22,9 +22,6 @@
 #include <my_getopt.h>
 #include <my_check_opt.h>
 #include <my_handler_errors.h>
-#ifdef HAVE_SYS_MMAN_H
-#include <sys/mman.h>
-#endif
 /* Remove next line if you want aria_chk to produce a stack trace */
 #undef HAVE_BACKTRACE
 #include <my_stacktrace.h>
@@ -636,11 +633,10 @@ TYPELIB maria_stats_method_typelib= {
 	 /* Read options */
 
 static my_bool
-get_one_option(int optid,
-	       const struct my_option *opt __attribute__((unused)),
-	       char *argument)
+get_one_option(const struct my_option *opt,
+	       char *argument, const char *filename __attribute__((unused)))
 {
-  switch (optid) {
+  switch (opt->id) {
 #ifdef __NETWARE__
   case OPT_AUTO_CLOSE:
     setscreenmode(SCR_AUTOCLOSE_ON_EXIT);

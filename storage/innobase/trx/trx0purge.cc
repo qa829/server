@@ -1272,7 +1272,8 @@ trx_purge(
 /*======*/
 	ulint	n_purge_threads,	/*!< in: number of purge tasks
 					to submit to the work queue */
-	bool	truncate)		/*!< in: truncate history if true */
+	bool	truncate		/*!< in: truncate history if true */
+)
 {
 	que_thr_t*	thr = NULL;
 	ulint		n_pages_handled;

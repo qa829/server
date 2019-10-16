@@ -5714,12 +5714,6 @@ int select_value_catcher::send_data(List<Item> &items)
   DBUG_ASSERT(!assigned);
   DBUG_ASSERT(items.elements == n_elements);
 
-  if (unit->offset_limit_cnt)
-  {				          // Using limit offset,count
-    unit->offset_limit_cnt--;
-    DBUG_RETURN(0);
-  }
-
   Item *val_item;
   List_iterator_fast<Item> li(items);
   for (uint i= 0; (val_item= li++); i++)
@@ -6574,7 +6568,7 @@ bool JOIN::choose_subquery_plan(table_map join_tables)
       Set the limit of this JOIN object as well, because normally its being
       set in the beginning of JOIN::optimize, which was already done.
     */
-    select_limit= in_subs->unit->select_limit_cnt;
+    select_limit= in_subs->unit->lim.get_select_limit();
   }
   else if (in_subs->test_strategy(SUBS_IN_TO_EXISTS))
   {

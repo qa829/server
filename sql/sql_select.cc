@@ -415,7 +415,7 @@ bool handle_select(THD *thd, LEX *lex, select_result *result,
     */
     res= mysql_select(thd,
 		      select_lex->table_list.first,
-		      select_lex->with_wild, select_lex->item_list,
+		      select_lex->item_list,
 		      select_lex->where,
 		      select_lex->order_list.elements +
 		      select_lex->group_list.elements,
@@ -1064,8 +1064,7 @@ int SELECT_LEX::vers_setup_conds(THD *thd, TABLE_LIST *tables)
     0   on success
 */
 int
-JOIN::prepare(TABLE_LIST *tables_init,
-	      uint wild_num, COND *conds_init, uint og_num,
+JOIN::prepare(TABLE_LIST *tables_init, COND *conds_init, uint og_num,
 	      ORDER *order_init, bool skip_order_by,
               ORDER *group_init, Item *having_init,
 	      ORDER *proc_param_init, SELECT_LEX *select_lex_arg,
@@ -1187,8 +1186,7 @@ JOIN::prepare(TABLE_LIST *tables_init,
     real_og_num+= select_lex->order_list.elements;
 
   DBUG_ASSERT(select_lex->hidden_bit_fields == 0);
-  if (setup_wild(thd, tables_list, fields_list, &all_fields, wild_num,
-                 &select_lex->hidden_bit_fields))
+  if (setup_wild(thd, tables_list, fields_list, &all_fields, select_lex))
     DBUG_RETURN(-1);
   if (select_lex->setup_ref_array(thd, real_og_num))
     DBUG_RETURN(-1);
@@ -1749,7 +1747,7 @@ JOIN::optimize_inner()
 {
   DBUG_ENTER("JOIN::optimize");
   subq_exit_fl= false;
-  do_send_rows = (unit->select_limit_cnt) ? 1 : 0;
+  do_send_rows = (unit->lim.get_select_limit()) ? 1 : 0;
 
   DEBUG_SYNC(thd, "before_join_optimize");
 
@@ -1824,9 +1822,9 @@ JOIN::optimize_inner()
     DBUG_RETURN(-1);
 
   row_limit= ((select_distinct || order || group_list) ? HA_POS_ERROR :
-	      unit->select_limit_cnt);
+	      unit->lim.get_select_limit());
   /* select_limit is used to decide if we are likely to scan the whole table */
-  select_limit= unit->select_limit_cnt;
+  select_limit= unit->lim.get_select_limit();
   if (having || (select_options & OPTION_FOUND_ROWS))
     select_limit= HA_POS_ERROR;
 #ifdef HAVE_REF_TO_FIELDS			// Not done yet
@@ -2054,9 +2052,10 @@ JOIN::optimize_inner()
         thd->change_item_tree(&sel->having, having);
     }
     if (cond_value == Item::COND_FALSE || having_value == Item::COND_FALSE ||
-        (!unit->select_limit_cnt && !(select_options & OPTION_FOUND_ROWS)))
+        (!unit->lim.get_select_limit() &&
+          !(select_options & OPTION_FOUND_ROWS)))
     {                                          /* Impossible cond */
-      if (unit->select_limit_cnt)
+      if (unit->lim.get_select_limit())
       {
         DBUG_PRINT("info", (having_value == Item::COND_FALSE ?
                               "Impossible HAVING" : "Impossible WHERE"));
@@ -3127,7 +3126,7 @@ bool JOIN::make_aggr_tables_info()
     distinct in the engine, so we do this for all queries, not only
     GROUP BY queries.
   */
-  if (tables_list && !procedure)
+  if (tables_list && top_join_tab_count && !procedure)
   {
     /*
       At the moment we only support push down for queries where
@@ -3145,7 +3144,8 @@ bool JOIN::make_aggr_tables_info()
     {
       /* Check if the storage engine can intercept the query */
       Query query= {&all_fields, select_distinct, tables_list, conds,
-                    group_list, order ? order : group_list, having};
+                    group_list, order ? order : group_list, having,
+                    &select_lex->master_unit()->lim};
       group_by_handler *gbh= ht->create_group_by(thd, &query);
 
       if (gbh)
@@ -3601,7 +3601,7 @@ bool JOIN::make_aggr_tables_info()
       */
       sort_tab->filesort->limit=
         (has_group_by || (join_tab + top_join_tab_count > curr_tab + 1)) ?
-         select_limit : unit->select_limit_cnt;
+         select_limit : unit->lim.get_select_limit();
     }
     if (!only_const_tables() &&
         !join_tab[const_tables].filesort &&
@@ -3986,9 +3986,6 @@ JOIN::reinit()
 {
   DBUG_ENTER("JOIN::reinit");
 
-  unit->offset_limit_cnt= (ha_rows)(select_lex->offset_limit ?
-                                    select_lex->offset_limit->val_uint() : 0);
-
   first_record= false;
   group_sent= false;
   cleaned= false;
@@ -4110,9 +4107,8 @@ bool JOIN::save_explain_data(Explain_query *output, bool can_overwrite,
     If there is SELECT in this statement with the same number it must be the
     same SELECT
   */
-  DBUG_SLOW_ASSERT(select_lex->select_number == UINT_MAX ||
-              select_lex->select_number == INT_MAX ||
-              !output ||
+  DBUG_ASSERT(select_lex->select_number == UINT_MAX ||
+              select_lex->select_number == INT_MAX || !output ||
               !output->get_select(select_lex->select_number) ||
               output->get_select(select_lex->select_number)->select_lex ==
                 select_lex);
@@ -4259,7 +4255,8 @@ void JOIN::exec_inner()
       {
 	if (do_send_rows &&
             (procedure ? (procedure->send_row(procedure_fields_list) ||
-             procedure->end_of_records()) : result->send_data(fields_list)> 0))
+             procedure->end_of_records()):
+             result->send_data_with_check(fields_list, unit, 0)> 0))
 	  error= 1;
 	else
 	  send_records= ((select_options & OPTION_FOUND_ROWS) ? 1 :
@@ -4472,11 +4469,6 @@ void JOIN::cleanup_item_list(List<Item> &items) const
                               the top-level select_lex for this query
   @param tables               list of all tables used in this query.
                               The tables have been pre-opened.
-  @param wild_num             number of wildcards used in the top level 
-                              select of this query.
-                              For example statement
-                              SELECT *, t1.*, catalog.t2.* FROM t0, t1, t2;
-                              has 3 wildcards.
   @param fields               list of items in SELECT list of the top-level
                               select
                               e.g. SELECT a, b, c FROM t1 will have Item_field
@@ -4509,12 +4501,10 @@ void JOIN::cleanup_item_list(List<Item> &items) const
 */
 
 bool
-mysql_select(THD *thd,
-	     TABLE_LIST *tables, uint wild_num, List<Item> &fields,
-	     COND *conds, uint og_num,  ORDER *order, ORDER *group,
-	     Item *having, ORDER *proc_param, ulonglong select_options,
-	     select_result *result, SELECT_LEX_UNIT *unit,
-	     SELECT_LEX *select_lex)
+mysql_select(THD *thd, TABLE_LIST *tables, List<Item> &fields, COND *conds,
+             uint og_num, ORDER *order, ORDER *group, Item *having,
+             ORDER *proc_param, ulonglong select_options, select_result *result,
+             SELECT_LEX_UNIT *unit, SELECT_LEX *select_lex)
 {
   int err= 0;
   bool free_join= 1;
@@ -4544,9 +4534,8 @@ mysql_select(THD *thd,
       }
       else
       {
-        if ((err= join->prepare( tables, wild_num,
-                                conds, og_num, order, false, group, having,
-                                proc_param, select_lex, unit)))
+        if ((err= join->prepare(tables, conds, og_num, order, false, group,
+                                having, proc_param, select_lex, unit)))
 	{
 	  goto err;
 	}
@@ -4568,9 +4557,8 @@ mysql_select(THD *thd,
 	DBUG_RETURN(TRUE);
     THD_STAGE_INFO(thd, stage_init);
     thd->lex->used_tables=0;
-    if ((err= join->prepare(tables, wild_num,
-                            conds, og_num, order, false, group, having, proc_param,
-                            select_lex, unit)))
+    if ((err= join->prepare(tables, conds, og_num, order, false, group, having,
+                            proc_param, select_lex, unit)))
     {
       goto err;
     }
@@ -5513,7 +5501,7 @@ make_join_statistics(JOIN *join, List<TABLE_LIST> &tables_list,
         if (double rr= join->best_positions[i].records_read)
           records= COST_MULT(records, rr);
       ha_rows rows= records > HA_ROWS_MAX ? HA_ROWS_MAX : (ha_rows) records;
-      set_if_smaller(rows, unit->select_limit_cnt);
+      set_if_smaller(rows, unit->lim.get_select_limit());
       join->select_lex->increase_derived_records(rows);
     }
   }
@@ -7970,7 +7958,7 @@ best_access_path(JOIN      *join,
   if (!best_key &&
       idx == join->const_tables &&
       s->table == join->sort_by_table &&
-      join->unit->select_limit_cnt >= records)
+      join->unit->lim.get_select_limit() >= records)
   {
     trace_access_scan.add("use_tmp_table", true);
     join->sort_by_table= (TABLE*) 1;  // Must use temporary table
@@ -11465,7 +11453,7 @@ make_join_select(JOIN *join,SQL_SELECT *select,COND *cond)
               !tab->loosescan_match_tab &&              // (1)
               ((cond && (!tab->keys.is_subset(tab->const_keys) && i > 0)) ||
                (!tab->const_keys.is_clear_all() && i == join->const_tables &&
-                join->unit->select_limit_cnt <
+                join->unit->lim.get_select_limit() <
                 join->best_positions[i].records_read &&
                 !(join->select_options & OPTION_FOUND_ROWS))))
 	  {
@@ -11489,7 +11477,7 @@ make_join_select(JOIN *join,SQL_SELECT *select,COND *cond)
 				       (join->select_options &
 					OPTION_FOUND_ROWS ?
 					HA_POS_ERROR :
-					join->unit->select_limit_cnt), 0,
+					join->unit->lim.get_select_limit()), 0,
                                        FALSE, FALSE, FALSE) < 0)
             {
 	      /*
@@ -11503,7 +11491,7 @@ make_join_select(JOIN *join,SQL_SELECT *select,COND *cond)
                                          (join->select_options &
                                           OPTION_FOUND_ROWS ?
                                           HA_POS_ERROR :
-                                          join->unit->select_limit_cnt),0,
+                                          join->unit->lim.get_select_limit()),0,
                                          FALSE, FALSE, FALSE) < 0)
 		DBUG_RETURN(1);			// Impossible WHERE
             }
@@ -14210,7 +14198,7 @@ return_zero_rows(JOIN *join, select_result *result, List<TABLE_LIST> &tables,
   {
     bool send_error= FALSE;
     if (send_row)
-      send_error= result->send_data(fields) > 0;
+      send_error= result->send_data_with_check(fields, join->unit, 0) > 0;
     if (likely(!send_error))
       result->send_eof();				// Should be safe
   }
@@ -17740,9 +17728,13 @@ void Item_result_field::get_tmp_field_src(Tmp_field_src *src,
 }
 
 
-Field *Item_result_field::create_tmp_field_ex(MEM_ROOT *root, TABLE *table,
-                                              Tmp_field_src *src,
-                                              const Tmp_field_param *param)
+Field *
+Item_result_field::create_tmp_field_ex_from_handler(
+                                          MEM_ROOT *root,
+                                          TABLE *table,
+                                          Tmp_field_src *src,
+                                          const Tmp_field_param *param,
+                                          const Type_handler *h)
 {
   /*
     Possible Item types:
@@ -17750,26 +17742,14 @@ Field *Item_result_field::create_tmp_field_ex(MEM_ROOT *root, TABLE *table,
     - Item_func
     - Item_subselect
   */
+  DBUG_ASSERT(fixed);
   DBUG_ASSERT(is_result_field());
   DBUG_ASSERT(type() != NULL_ITEM);
   get_tmp_field_src(src, param);
   Field *result;
-  if ((result= tmp_table_field_from_field_type(root, table)) &&
-      param->modify_item())
-    result_field= result;
-  return result;
-}
-
-
-Field *Item_func_user_var::create_tmp_field_ex(MEM_ROOT *root, TABLE *table,
-                                               Tmp_field_src *src,
-                                               const Tmp_field_param *param)
-{
-  DBUG_ASSERT(is_result_field());
-  DBUG_ASSERT(type() != NULL_ITEM);
-  get_tmp_field_src(src, param);
-  Field *result;
-  if ((result= create_table_field_from_handler(root, table)) &&
+  if ((result= h->make_and_init_table_field(root, &name,
+                                            Record_addr(maybe_null),
+                                            *this, table)) &&
       param->modify_item())
     result_field= result;
   return result;
@@ -19809,7 +19789,7 @@ do_select(JOIN *join, Procedure *procedure)
       // HAVING will be checked by end_select
       error= (*end_select)(join, 0, 0);
       if (error >= NESTED_LOOP_OK)
-	error= (*end_select)(join, 0, 1);
+        error= (*end_select)(join, 0, 1);
 
       /*
         If we don't go through evaluate_join_record(), do the counting
@@ -19825,7 +19805,8 @@ do_select(JOIN *join, Procedure *procedure)
       {
         List<Item> *columns_list= (procedure ? &join->procedure_fields_list :
                                    join->fields);
-        rc= join->result->send_data(*columns_list) > 0;
+        rc= join->result->send_data_with_check(*columns_list,
+                                               join->unit, 0) > 0;
       }
     }
     /*
@@ -21497,7 +21478,9 @@ end_send(JOIN *join, JOIN_TAB *join_tab __attribute__((unused)),
     {
       int error;
       /* result < 0 if row was not accepted and should not be counted */
-      if (unlikely((error= join->result->send_data(*fields))))
+      if (unlikely((error= join->result->send_data_with_check(*fields,
+                                                              join->unit,
+                                                              join->send_records))))
       {
         if (error > 0)
           DBUG_RETURN(NESTED_LOOP_ERROR);
@@ -21507,7 +21490,7 @@ end_send(JOIN *join, JOIN_TAB *join_tab __attribute__((unused)),
     }
 
     ++join->send_records;
-    if (join->send_records >= join->unit->select_limit_cnt &&
+    if (join->send_records >= join->unit->lim.get_select_limit() &&
         !join->do_send_rows)
     {
       /*
@@ -21525,7 +21508,7 @@ end_send(JOIN *join, JOIN_TAB *join_tab __attribute__((unused)),
         DBUG_RETURN(NESTED_LOOP_QUERY_LIMIT);
       }
     }
-    if (join->send_records >= join->unit->select_limit_cnt &&
+    if (join->send_records >= join->unit->lim.get_select_limit() &&
 	join->do_send_rows)
     {
       if (join->select_options & OPTION_FOUND_ROWS)
@@ -21645,7 +21628,9 @@ end_send_group(JOIN *join, JOIN_TAB *join_tab __attribute__((unused)),
 	  {
 	    if (join->do_send_rows)
             {
-	      error=join->result->send_data(*fields);
+	      error= join->result->send_data_with_check(*fields,
+                                                        join->unit,
+                                                        join->send_records);
               if (unlikely(error < 0))
               {
                 /* Duplicate row, don't count */
@@ -21666,13 +21651,13 @@ end_send_group(JOIN *join, JOIN_TAB *join_tab __attribute__((unused)),
           DBUG_RETURN(NESTED_LOOP_ERROR);        /* purecov: inspected */
 	if (end_of_records)
 	  DBUG_RETURN(NESTED_LOOP_OK);
-	if (join->send_records >= join->unit->select_limit_cnt &&
+	if (join->send_records >= join->unit->lim.get_select_limit() &&
 	    join->do_send_rows)
 	{
 	  if (!(join->select_options & OPTION_FOUND_ROWS))
 	    DBUG_RETURN(NESTED_LOOP_QUERY_LIMIT); // Abort nicely
 	  join->do_send_rows=0;
-	  join->unit->select_limit_cnt = HA_POS_ERROR;
+	  join->unit->lim.set_unlimited();
         }
         else if (join->send_records >= join->fetch_limit)
         {
@@ -21757,7 +21742,7 @@ end_write(JOIN *join, JOIN_TAB *join_tab __attribute__((unused)),
 	if (!(join->select_options & OPTION_FOUND_ROWS))
 	  DBUG_RETURN(NESTED_LOOP_QUERY_LIMIT);
 	join->do_send_rows=0;
-	join->unit->select_limit_cnt = HA_POS_ERROR;
+	join->unit->lim.set_unlimited();
       }
     }
   }
@@ -23119,8 +23104,9 @@ test_if_skip_sort_order(JOIN_TAB *tab,ORDER *order,ha_rows select_limit,
                                          (tab->join->select_options &
                                           OPTION_FOUND_ROWS) ?
                                           HA_POS_ERROR :
-                                          tab->join->unit->select_limit_cnt,TRUE,
-                                         TRUE, FALSE, FALSE) <= 0;
+                                          tab->join->unit->
+                                            lim.get_select_limit(),
+                                          TRUE, TRUE, FALSE, FALSE) <= 0;
           if (res)
           {
             select->cond= save_cond;
@@ -23221,7 +23207,7 @@ test_if_skip_sort_order(JOIN_TAB *tab,ORDER *order,ha_rows select_limit,
       select->test_quick_select(join->thd, tmp_map, 0,
                                 join->select_options & OPTION_FOUND_ROWS ?
                                 HA_POS_ERROR :
-                                join->unit->select_limit_cnt,
+                                join->unit->lim.get_select_limit(),
                                 TRUE, FALSE, FALSE, FALSE);
 
       if (cond_saved)
@@ -23654,7 +23640,7 @@ JOIN_TAB::remove_duplicates()
 
   if (!field_count && !(join->select_options & OPTION_FOUND_ROWS) && !having) 
   {                    // only const items with no OPTION_FOUND_ROWS
-    join->unit->select_limit_cnt= 1;		// Only send first row
+    join->unit->lim.set_single_row();		// Only send first row
     DBUG_RETURN(false);
   }
 
@@ -25853,8 +25839,9 @@ int JOIN::rollup_send_data(uint idx)
     copy_ref_ptr_array(ref_ptrs, rollup.ref_pointer_arrays[i]);
     if ((!having || having->val_int()))
     {
-      if (send_records < unit->select_limit_cnt && do_send_rows &&
-	  (res= result->send_data(rollup.fields[i])) > 0)
+      if (send_records < unit->lim.get_select_limit() && do_send_rows &&
+	  (res= result->send_data_with_check(rollup.fields[i],
+                                             unit, send_records)) > 0)
 	return 1;
       if (!res)
         send_records++;
@@ -26758,21 +26745,8 @@ int JOIN::save_explain_data_intern(Explain_query *output,
        tmp_unit;
        tmp_unit= tmp_unit->next_unit())
   {
-    /* 
-      Display subqueries only if 
-      (1) they are not parts of ON clauses that were eliminated by table 
-          elimination.
-      (2) they are not merged derived tables
-      (3) they are not hanging CTEs (they are needed for execution)
-    */
-    if (!(tmp_unit->item && tmp_unit->item->eliminated) &&    // (1)
-        (!tmp_unit->derived ||
-         tmp_unit->derived->is_materialized_derived()) &&     // (2)
-        !(tmp_unit->with_element &&
-          (!tmp_unit->derived || !tmp_unit->derived->derived_result))) // (3)
-   {
+    if (tmp_unit->explainable())
       explain->add_child(tmp_unit->first_select()->select_number);
-    }
   }
 
   if (select_lex->is_top_level_node())
@@ -26826,16 +26800,7 @@ static void select_describe(JOIN *join, bool need_tmp_table, bool need_order,
       DBUG_ASSERT(ref == unit->item);
     }
 
-    /* 
-      Save plans for child subqueries, when
-      (1) they are not parts of eliminated WHERE/ON clauses.
-      (2) they are not VIEWs that were "merged for INSERT".
-      (3) they are not hanging CTEs (they are needed for execution)
-    */
-    if (!(unit->item && unit->item->eliminated) &&                     // (1)
-        !(unit->derived && unit->derived->merged_for_insert) &&        // (2)
-        !(unit->with_element &&
-          (!unit->derived || !unit->derived->derived_result)))         // (3)
+    if (unit->explainable())
     {
       if (mysql_explain_union(thd, unit, result))
         DBUG_VOID_RETURN;
@@ -26877,15 +26842,11 @@ bool mysql_explain_union(THD *thd, SELECT_LEX_UNIT *unit, select_result *result)
   {
     thd->lex->current_select= first;
     unit->set_limit(unit->global_parameters());
-    res= mysql_select(thd, 
-                      first->table_list.first,
-                      first->with_wild, first->item_list,
+    res= mysql_select(thd, first->table_list.first, first->item_list,
                       first->where,
                       first->order_list.elements + first->group_list.elements,
-                      first->order_list.first,
-                      first->group_list.first,
-                      first->having,
-                      thd->lex->proc_list.first,
+                      first->order_list.first, first->group_list.first,
+                      first->having, thd->lex->proc_list.first,
                       first->options | thd->variables.option_bits | SELECT_DESCRIBE,
                       result, unit, first);
   }

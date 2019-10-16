@@ -438,7 +438,6 @@ int mysql_update(THD *thd,
     my_error(ER_NON_UPDATABLE_TABLE, MYF(0), table_list->alias.str, "UPDATE");
     DBUG_RETURN(1);
   }
-  query_plan.updating_a_view= MY_TEST(table_list->view);
   
   /* Calculate "table->covering_keys" based on the WHERE */
   table->covering_keys= table->s->keys_in_use;
@@ -1901,7 +1900,7 @@ bool mysql_multi_update(THD *thd, TABLE_LIST *table_list, List<Item> *fields,
   List<Item> total_list;
 
   res= mysql_select(thd,
-                    table_list, select_lex->with_wild, total_list, conds,
+                    table_list, total_list, conds,
                     select_lex->order_list.elements,
                     select_lex->order_list.first, NULL, NULL, NULL,
                     options | SELECT_NO_JOIN_CACHE | SELECT_NO_UNLOCK |

@@ -2744,7 +2744,7 @@ bool Item_in_subselect::inject_in_to_exists_cond(JOIN *join_arg)
   join_arg->thd->change_item_tree(&unit->global_parameters()->select_limit,
                                   new (thd->mem_root)
                                   Item_int(thd, (int32) 1));
-  unit->select_limit_cnt= 1;
+  unit->lim.set_single_row();
 
   DBUG_RETURN(false);
 }
@@ -3720,7 +3720,6 @@ int subselect_single_select_engine::prepare(THD *thd)
   SELECT_LEX *save_select= thd->lex->current_select;
   thd->lex->current_select= select_lex;
   if (join->prepare(select_lex->table_list.first,
-		    select_lex->with_wild,
 		    select_lex->where,
 		    select_lex->order_list.elements +
 		    select_lex->group_list.elements,

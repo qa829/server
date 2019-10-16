@@ -163,16 +163,11 @@ extern "C" {					// Because of SCO 3.2V4.2
 
 #include <my_libwrap.h>
 
-#ifdef HAVE_SYS_MMAN_H
-#include <sys/mman.h>
-#endif
-
 #ifdef __WIN__ 
 #include <crtdbg.h>
 #endif
 
 #ifdef HAVE_SOLARIS_LARGE_PAGES
-#include <sys/mman.h>
 #if defined(__sun__) && defined(__GNUC__) && defined(__cplusplus) \
     && defined(_XOPEN_SOURCE)
 extern int getpagesizes(size_t *, int);
@@ -1477,7 +1472,7 @@ static int mysql_init_variables(void);
 static int get_options(int *argc_ptr, char ***argv_ptr);
 static bool add_terminator(DYNAMIC_ARRAY *options);
 static bool add_many_options(DYNAMIC_ARRAY *, my_option *, size_t);
-extern "C" my_bool mysqld_get_one_option(int, const struct my_option *, char *);
+extern "C" my_bool mysqld_get_one_option(const struct my_option *, char *, const char *);
 static int init_thread_environment();
 static char *get_relative_path(const char *path);
 static int fix_paths(void);
@@ -5349,9 +5344,8 @@ int mysqld_main(int argc, char **argv)
 
   orig_argc= argc;
   orig_argv= argv;
-  my_getopt_use_args_separator= TRUE;
+  my_defaults_mark_files= TRUE;
   load_defaults_or_exit(MYSQL_CONFIG_NAME, load_default_groups, &argc, &argv);
-  my_getopt_use_args_separator= FALSE;
   defaults_argc= argc;
   defaults_argv= argv;
   remaining_argc= argc;
@@ -6358,7 +6352,6 @@ int handle_early_options()
   int ho_error;
   DYNAMIC_ARRAY all_early_options;
 
-  my_getopt_register_get_addr(NULL);
   /* Skip unknown options so that they may be processed later */
   my_getopt_skip_unknown= TRUE;
 
@@ -7434,6 +7427,7 @@ SHOW_VAR status_vars[]= {
   {"Feature_dynamic_columns",  (char*) offsetof(STATUS_VAR, feature_dynamic_columns), SHOW_LONG_STATUS},
   {"Feature_fulltext",         (char*) offsetof(STATUS_VAR, feature_fulltext), SHOW_LONG_STATUS},
   {"Feature_gis",              (char*) offsetof(STATUS_VAR, feature_gis), SHOW_LONG_STATUS},
+  {"Feature_insert_returning",   (char*)offsetof(STATUS_VAR, feature_insert_returning), SHOW_LONG_STATUS},
   {"Feature_invisible_columns",   (char*) offsetof(STATUS_VAR, feature_invisible_columns), SHOW_LONG_STATUS},
   {"Feature_json",             (char*) offsetof(STATUS_VAR, feature_json), SHOW_LONG_STATUS},
   {"Feature_locale",           (char*) offsetof(STATUS_VAR, feature_locale), SHOW_LONG_STATUS},
@@ -7984,7 +7978,8 @@ static int mysql_init_variables(void)
 }
 
 my_bool
-mysqld_get_one_option(int optid, const struct my_option *opt, char *argument)
+mysqld_get_one_option(const struct my_option *opt, char *argument,
+                      const char *filename)
 {
   if (opt->app_type)
   {
@@ -7994,10 +7989,16 @@ mysqld_get_one_option(int optid, const struct my_option *opt, char *argument)
       var->value_origin= sys_var::AUTO;
       return 0;
     }
-    var->value_origin= sys_var::CONFIG;
+    if (*filename)
+    {
+      var->origin_filename= filename;
+      var->value_origin= sys_var::CONFIG;
+    }
+    else
+      var->value_origin= sys_var::COMMAND_LINE;
   }
 
-  switch(optid) {
+  switch(opt->id) {
   case '#':
 #ifndef DBUG_OFF
     if (!argument)
@@ -8533,13 +8534,12 @@ static int get_options(int *argc_ptr, char ***argv_ptr)
 {
   int ho_error;
 
-  my_getopt_register_get_addr(mysql_getopt_value);
+  my_getopt_get_addr= mysql_getopt_value;
   my_getopt_error_reporter= option_error_reporter;
 
   /* prepare all_options array */
   my_init_dynamic_array(&all_options, sizeof(my_option),
-                        array_elements(my_long_options) +
-                        sys_var_elements(),
+                        array_elements(my_long_options) + sys_var_elements(),
                         array_elements(my_long_options)/4, MYF(0));
   add_many_options(&all_options, my_long_options, array_elements(my_long_options));
   sys_var_add_options(&all_options, 0);

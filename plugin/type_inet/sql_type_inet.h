@@ -386,6 +386,7 @@ public:
   }
 
   bool is_scalar_type() const override { return true; }
+  bool is_val_native_ready() const override { return true; }
   bool can_return_int() const override { return false; }
   bool can_return_decimal() const override { return false; }
   bool can_return_real() const override { return false; }
@@ -393,6 +394,7 @@ public:
   bool can_return_text() const override { return true; }
   bool can_return_date() const override { return false; }
   bool can_return_time() const override { return false; }
+  bool convert_to_binary_using_val_native() const override { return true; }
 
   uint Item_time_precision(THD *thd, Item *item) const override
   {
@@ -475,6 +477,15 @@ public:
     def->pack_flag= FIELDFLAG_BINARY;
     return false;
   }
+
+  bool partition_field_check(const LEX_CSTRING &field_name,
+                             Item *item_expr) const override;
+
+  bool partition_field_append_value(String *to,
+                                    Item *item_expr,
+                                    CHARSET_INFO *field_cs,
+                                    partition_value_print_mode_t mode)
+                                    const override;
 
   Field *make_table_field(MEM_ROOT *root,
                           const LEX_CSTRING *name,
@@ -923,6 +934,12 @@ public:
     return Item_func_or_sum_illegal_param(item);
   }
   bool
+  Item_float_typecast_fix_length_and_dec(Item_float_typecast *item)
+                                         const override
+  {
+    return Item_func_or_sum_illegal_param(item);
+  }
+  bool
   Item_decimal_typecast_fix_length_and_dec(Item_decimal_typecast *item)
                                            const override
   {
@@ -930,11 +947,7 @@ public:
   }
   bool
   Item_char_typecast_fix_length_and_dec(Item_char_typecast *item)
-                                        const override
-  {
-    item->fix_length_and_dec_str();
-    return false;
-  }
+                                        const override;
   bool
   Item_time_typecast_fix_length_and_dec(Item_time_typecast *item) const override
   {
