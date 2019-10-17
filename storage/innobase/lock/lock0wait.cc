@@ -52,10 +52,9 @@ lock_wait_table_print(void)
 	for (ulint i = 0; i < srv_max_n_threads; i++, ++slot) {
 
 		fprintf(stderr,
-			"Slot %lu: thread type %lu,"
+			"Slot %lu:"
 			" in use %lu, susp %lu, timeout %lu, time %lu\n",
 			(ulong) i,
-			(ulong) slot->type,
 			(ulong) slot->in_use,
 			(ulong) slot->suspended,
 			slot->wait_timeout,
@@ -165,7 +164,10 @@ lock_wait_table_reserve_slot(
 
 			ut_ad(lock_sys.last_slot
 			      <= lock_sys.waiting_threads + srv_max_n_threads);
-
+			if (!lock_sys.timeout_timer_active) {
+				lock_sys.timeout_timer_active = true;
+				lock_sys.timeout_timer->set_time(1000, 0);
+			}
 			return(slot);
 		}
 	}
@@ -236,7 +238,7 @@ lock_wait_suspend_thread(
 	ibool		was_declared_inside_innodb;
 	ulong		lock_wait_timeout;
 
-  ut_a(lock_sys.timeout_timer.get());
+	ut_a(lock_sys.timeout_timer.get());
 	trx = thr_get_trx(thr);
 
 	if (trx->mysql_thd != 0) {
@@ -506,7 +508,7 @@ void lock_wait_timeout_task(void*)
 
 	/* Check all slots for user threads that are waiting
 	on locks, and if they have exceeded the time limit. */
-
+	bool any_slot_in_use  = false;
 	for (srv_slot_t* slot = lock_sys.waiting_threads;
 		slot < lock_sys.last_slot;
 		++slot) {
@@ -517,8 +519,14 @@ void lock_wait_timeout_task(void*)
 		mutex. */
 
 		if (slot->in_use) {
+			any_slot_in_use = true;
 			lock_wait_check_and_cancel(slot);
 		}
+	}
+	if (any_slot_in_use) {
+		lock_sys.timeout_timer->set_time(1000, 0);
+	} else {
+		lock_sys.timeout_timer_active = false;
 	}
 	lock_wait_mutex_exit();
 }

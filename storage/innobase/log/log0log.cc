@@ -1589,7 +1589,7 @@ logs_empty_and_mark_files_at_shutdown(void)
 	/* Wait for the end of the buffer resize task.*/
 	buf_resize_shutdown();
 	dict_stats_shutdown();
-  btr_defragment_shutdown();
+	btr_defragment_shutdown();
 
 	srv_shutdown_state = SRV_SHUTDOWN_CLEANUP;
 
@@ -1672,27 +1672,16 @@ wait_suspend_loop:
 
 	/* Check that the background threads are suspended */
 
-	switch (srv_get_active_thread_type()) {
-	case SRV_NONE:
-		if (!srv_n_fil_crypt_threads_started) {
-			srv_shutdown_state = SRV_SHUTDOWN_FLUSH_PHASE;
-			break;
-		}
+	ut_a(!srv_any_background_activity());
+	if (srv_n_fil_crypt_threads_started) {
 		os_event_set(fil_crypt_threads_event);
 		thread_name = "fil_crypt_thread";
-		goto wait_suspend_loop;
-	case SRV_PURGE:
-	case SRV_WORKER:
-		ut_ad(!"purge was not shut down");
-		srv_purge_wakeup();
-		thread_name = "purge thread";
-		goto wait_suspend_loop;
-	case SRV_MASTER:
-		thread_name = "master thread";
 		goto wait_suspend_loop;
 	}
 
 	buf_load_dump_end();
+
+	srv_shutdown_state = SRV_SHUTDOWN_FLUSH_PHASE;
 
 	/* At this point only page_cleaner should be active. We wait
 	here to let it complete the flushing of the buffer pools
@@ -1806,7 +1795,7 @@ wait_suspend_loop:
 	srv_shutdown_state = SRV_SHUTDOWN_LAST_PHASE;
 
 	/* Make some checks that the server really is quiet */
-	ut_a(srv_get_active_thread_type() == SRV_NONE);
+	ut_a(!srv_any_background_activity());
 
 	service_manager_extend_timeout(INNODB_EXTEND_TIMEOUT_INTERVAL,
 				       "Free innodb buffer pool");
@@ -1834,7 +1823,7 @@ wait_suspend_loop:
 	fil_close_all_files();
 
 	/* Make some checks that the server really is quiet */
-	ut_a(srv_get_active_thread_type() == SRV_NONE);
+	ut_a(!srv_any_background_activity());
 
 	ut_a(lsn == log_sys.lsn
 	     || srv_force_recovery == SRV_FORCE_NO_LOG_REDO);

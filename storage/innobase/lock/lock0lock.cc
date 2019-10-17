@@ -470,6 +470,7 @@ void lock_sys_t::create(ulint n_cells)
 		lock_latest_err_file = os_file_create_tmpfile();
 		ut_a(lock_latest_err_file);
 	}
+	timeout_timer_active = false;
 }
 
 /** Calculates the fold value of a lock: used in migrating the hash table.

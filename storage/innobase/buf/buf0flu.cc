@@ -2727,7 +2727,11 @@ pc_request(
 	page_cleaner.n_slots_requested = page_cleaner.n_slots;
 	page_cleaner.n_slots_flushing = 0;
 	page_cleaner.n_slots_finished = 0;
-	pc_submit_task();
+
+	/* ´Submit slots-1 tasks, coordinator also does the work itself */
+	for (ulint i = 0; i < page_cleaner.n_slots - 1; i++) {
+		pc_submit_task();
+	}
 	mutex_exit(&page_cleaner.mutex);
 }
 
@@ -2851,6 +2855,7 @@ pc_wait_finished(
 	ulint*	n_flushed_lru,
 	ulint*	n_flushed_list)
 {
+	pc_wait_all_tasks();
 	bool	all_succeeded = true;
 
 	*n_flushed_lru = 0;
@@ -3281,7 +3286,7 @@ DECLARE_THREAD(buf_flush_page_cleaner_coordinator)(void*)
 
 	/* At this point all threads including the master and the purge
 	thread must have been suspended. */
-	ut_a(srv_get_active_thread_type() == SRV_NONE);
+	ut_a(!srv_any_background_activity());
 	ut_a(srv_shutdown_state == SRV_SHUTDOWN_FLUSH_PHASE);
 
 	/* We can now make a final sweep on flushing the buffer pool
@@ -3313,7 +3318,7 @@ DECLARE_THREAD(buf_flush_page_cleaner_coordinator)(void*)
 	} while (!success || n_flushed > 0);
 
 	/* Some sanity checks */
-	ut_a(srv_get_active_thread_type() == SRV_NONE);
+	ut_a(!srv_any_background_activity());
 	ut_a(srv_shutdown_state == SRV_SHUTDOWN_FLUSH_PHASE);
 
 	for (ulint i = 0; i < srv_buf_pool_instances; i++) {

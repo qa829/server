@@ -708,17 +708,6 @@ enum srv_stats_method_name_enum {
 
 typedef enum srv_stats_method_name_enum		srv_stats_method_name_t;
 
-/** Types of threads existing in the system. */
-enum srv_thread_type {
-	SRV_NONE,			/*!< None */
-	SRV_WORKER,			/*!< threads serving parallelized
-					queries and queries released from
-					lock wait */
-	SRV_PURGE,			/*!< Purge coordinator thread */
-	SRV_MASTER			/*!< the master thread, (whose type
-					number must be biggest) */
-};
-
 /*********************************************************************//**
 Boots Innobase server. */
 void
@@ -742,10 +731,10 @@ Resets the info describing an i/o thread current state. */
 void
 srv_reset_io_thread_op_info();
 
-/** Wake up the purge threads if there is work to do. */
+/** Wake up the purge if there is work to do. */
 void
 srv_wake_purge_thread_if_not_active();
-/** Wake up the InnoDB master thread if it was suspended (not sleeping). */
+/** Wake up the InnoDB master thread */
 void
 srv_active_wake_master_thread_low();
 
@@ -755,7 +744,7 @@ srv_active_wake_master_thread_low();
 			srv_active_wake_master_thread_low();		\
 		}							\
 	} while (0)
-/** Wake up the master thread if it is suspended or being suspended. */
+/** Wake up the master */
 void
 srv_wake_master_thread();
 
@@ -808,12 +797,11 @@ srv_que_task_enqueue_low(
 	que_thr_t*	thr);	/*!< in: query thread */
 
 /**********************************************************************//**
-Check whether any background thread is active. If so, return the thread
-type.
-@return SRV_NONE if all are are suspended or have exited, thread
-type if any are still active. */
-enum srv_thread_type
-srv_get_active_thread_type(void);
+Check whether purge or master is active.
+@return false if all are are suspended or have exited, true
+if any are still active. */
+bool srv_any_background_activity();
+
 /*============================*/
 
 extern "C" {
@@ -824,7 +812,7 @@ void srv_monitor_task(void*);
 
 
 /** The periodic master task controlling the server. */
-void srv_master_task(void *);
+void srv_master_callback(void *);
 
 
 /**
@@ -1050,8 +1038,6 @@ struct export_var_t{
 
 /** Thread slot in the thread table.  */
 struct srv_slot_t{
-	srv_thread_type type;			/*!< thread type: user,
-						utility etc. */
 	ibool		in_use;			/*!< TRUE if this slot
 						is in use */
 	ibool		suspended;		/*!< TRUE if the thread is
@@ -1075,22 +1061,7 @@ struct srv_slot_t{
 						to do */
 	que_thr_t*	thr;			/*!< suspended query thread
 						(only used for user threads) */
-#ifdef UNIV_DEBUG
-	struct debug_sync_t {
-		UT_LIST_NODE_T(debug_sync_t) debug_sync_list;
-	};
-	UT_LIST_BASE_NODE_T(debug_sync_t) debug_sync;
-	rw_lock_t debug_sync_lock;
-#endif
 };
-
-#ifdef UNIV_DEBUG
-typedef void srv_slot_callback_t(srv_slot_t*, const void*);
-
-void srv_for_each_thread(srv_thread_type type,
-			 srv_slot_callback_t callback,
-			 const void *arg);
-#endif
 
 #ifdef WITH_WSREP
 UNIV_INTERN

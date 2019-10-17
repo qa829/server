@@ -172,15 +172,6 @@ enum srv_shutdown_t	srv_shutdown_state = SRV_SHUTDOWN_NONE;
 /** Files comprising the system tablespace */
 pfs_os_file_t	files[1000];
 
-/** io_handler_thread identifiers, 32 is the maximum number of purge threads  */
-/** 6 is the ? */
-#define	START_OLD_THREAD_CNT	(SRV_MAX_N_IO_THREADS + 6 + 32)
-static os_thread_id_t	thread_ids[SRV_MAX_N_IO_THREADS + 6 + 32];
-
-/** Thead handles */
-static os_thread_t	thread_handles[SRV_MAX_N_IO_THREADS + 6 + 32];
-/** Status variables, is thread started ?*/
-static bool		thread_started[SRV_MAX_N_IO_THREADS + 6 + 32] = {false};
 /** Name of srv_monitor_file */
 static char*	srv_monitor_file_name;
 std::unique_ptr<tpool::timer> srv_master_timer;
@@ -1007,6 +998,10 @@ srv_shutdown_all_bg_threads()
 	lock_sys.timeout_timer.reset();
 	srv_master_timer.reset();
 
+	if (purge_sys.enabled()) {
+		srv_purge_shutdown();
+	}
+
 	/* All threads end up waiting for certain events. Put those events
 	to the signaled state. Then the threads will exit themselves after
 	os_event_wait(). */
@@ -1018,12 +1013,6 @@ srv_shutdown_all_bg_threads()
 		if (!srv_read_only_mode) {
 			/* b. srv error monitor thread exits automatically,
 			no need to do anything here */
-
-			if (srv_start_state_is_set(SRV_START_STATE_PURGE)) {
-				/* d. Wakeup purge threads. */
-				srv_purge_wakeup();
-			}
-
 			if (srv_n_fil_crypt_threads_started) {
 				os_event_set(fil_crypt_threads_event);
 			}
@@ -2146,13 +2135,13 @@ files_checked:
 	if (!srv_read_only_mode) {
 		/* timer task which watches the timeouts
 		for lock waits */
-    srv_start_periodic_timer(lock_sys.timeout_timer,
-      lock_wait_timeout_task, 1000);
+		lock_sys.timeout_timer.reset(srv_thread_pool->create_timer(
+			lock_wait_timeout_task, nullptr, nullptr));
 
 		DBUG_EXECUTE_IF("innodb_skip_monitors", goto skip_monitors;);
 		/* Create the task which warns of long semaphore waits */
-    srv_start_periodic_timer(srv_error_monitor_timer, srv_error_monitor_task, 1000);
-    srv_start_periodic_timer(srv_monitor_timer, srv_monitor_task, 5000);
+		srv_start_periodic_timer(srv_error_monitor_timer, srv_error_monitor_task, 1000);
+		srv_start_periodic_timer(srv_monitor_timer, srv_monitor_task, 5000);
 
 		srv_start_state |= SRV_START_STATE_LOCK_SYS
 			| SRV_START_STATE_MONITOR;
@@ -2206,28 +2195,16 @@ skip_monitors:
 		trx_temp_rseg_create();
 
 		if (srv_force_recovery < SRV_FORCE_NO_BACKGROUND) {
-			srv_start_periodic_timer(srv_master_timer, srv_master_task, 1000);
+			srv_start_periodic_timer(srv_master_timer, srv_master_callback, 1000);
 		}
 	}
 
 	if (!srv_read_only_mode && srv_operation == SRV_OPERATION_NORMAL
 	    && srv_force_recovery < SRV_FORCE_NO_BACKGROUND) {
 
-		srv_init_purge_tasks(srv_n_purge_threads - 1);
-
-		thread_handles[5 + SRV_MAX_N_IO_THREADS] = os_thread_create(
-			srv_purge_coordinator_thread,
-			NULL, thread_ids + 5 + SRV_MAX_N_IO_THREADS);
-
-		thread_started[5 + SRV_MAX_N_IO_THREADS] = true;
-
-		while (srv_shutdown_state == SRV_SHUTDOWN_NONE
-		       && srv_force_recovery < SRV_FORCE_NO_BACKGROUND
-		       && !purge_sys.enabled()) {
-			ib::info() << "Waiting for purge to start";
-			os_thread_sleep(50000);
-		}
-
+		srv_init_purge_tasks(srv_n_purge_threads);
+		purge_sys.coordinator_startup();
+		srv_wake_purge_thread_if_not_active();
 		srv_start_state_set(SRV_START_STATE_PURGE);
 	}
 

@@ -787,6 +787,7 @@ public:
 	ulint		n_lock_max_wait_time;	/*!< Max wait time */
 
 	std::unique_ptr<tpool::timer>	timeout_timer; /*!< Thread pool timer task */
+	bool timeout_timer_active;
 
 
   /**
