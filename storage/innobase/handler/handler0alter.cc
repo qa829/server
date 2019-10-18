@@ -2878,6 +2878,7 @@ innobase_get_foreign_key_info(
 	char*		referenced_table_name = NULL;
 	ulint		num_fk = 0;
 	Alter_info*	alter_info = ha_alter_info->alter_info;
+	const CHARSET_INFO*	cs = innobase_get_charset(trx->mysql_thd);
 
 	DBUG_ENTER("innobase_get_foreign_key_info");
 
@@ -2991,7 +2992,7 @@ innobase_get_foreign_key_info(
 			tbl_namep,
 			tbl_name_len,
 			&referenced_table,
-			add_fk[num_fk]->heap);
+			add_fk[num_fk]->heap, cs);
 
 		/* Test the case when referenced_table failed to
 		open, if trx->check_foreigns is not set, we should

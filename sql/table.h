@@ -639,10 +639,19 @@ struct TABLE_SHARE
   engine_option_value *option_list;     /* text options for table */
   ha_table_option_struct *option_struct; /* structure with parsed options */
 
+
   /* The following is copied to each TABLE on OPEN */
   Field **field;
   Field **found_next_number_field;
   KEY  *key_info;			/* data of keys in database */
+  List <FOREIGN_KEY_INFO> *foreign_keys;
+  List <FOREIGN_KEY_INFO> *referenced_keys;
+  bool update_foreign_keys(THD *thd, Alter_info *alter_info);
+  bool referenced_by_foreign_key() const
+  {
+    return referenced_keys && !referenced_keys->is_empty();
+  }
+
   Virtual_column_info **check_constraints;
   uint	*blob_field;			/* Index to blobs in Field arrray*/
   LEX_CUSTRING vcol_defs;              /* definitions of generated columns */

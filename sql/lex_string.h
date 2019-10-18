@@ -46,6 +46,24 @@ class Lex_cstring : public LEX_CSTRING
     str= _str;
     length= _len;
   }
+  Lex_cstring *strdup_root(MEM_ROOT &mem_root)
+  {
+    Lex_cstring *dst=
+        (Lex_cstring *) alloc_root(&mem_root, sizeof(Lex_cstring));
+    if (!dst)
+      return NULL;
+    if (!str)
+    {
+      dst->str= NULL;
+      dst->length= 0;
+      return dst;
+    }
+    dst->str= (const char *) memdup_root(&mem_root, str, length + 1);
+    if (!dst->str)
+      return NULL;
+    dst->length= length;
+    return dst;
+  }
 };
 
 

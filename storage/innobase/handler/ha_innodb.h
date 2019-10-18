@@ -218,16 +218,9 @@ public:
 
 	char* get_foreign_key_create_info() override;
 
-        int get_foreign_key_list(THD *thd,
-                                 List<FOREIGN_KEY_INFO> *f_key_list) override;
-
-	int get_parent_foreign_key_list(
-		THD*			thd,
-		List<FOREIGN_KEY_INFO>*	f_key_list) override;
-
 	bool can_switch_engines() override;
 
-	uint referenced_by_foreign_key() override;
+	uint referenced_by_foreign_key();
 
 	void free_foreign_key_create_info(char* str) override;
 
@@ -506,6 +499,11 @@ protected:
 
         /** If mysql has locked with external_lock() */
         bool                    m_mysql_has_locked;
+
+private:
+	List<FOREIGN_KEY_INFO>*
+	build_foreign_list(THD* thd, dict_foreign_set& foreign_set,
+			   bool& err) const;
 };
 
 
@@ -642,6 +640,9 @@ public:
 
 	/** Set m_tablespace_type. */
 	void set_tablespace_type(bool table_being_altered_is_file_per_table);
+
+	/** Create InnoDB foreign keys from MySQL alter_info. */
+	dberr_t create_foreign_keys();
 
 	/** Create the internal innodb table.
 	@param create_fk	whether to add FOREIGN KEY constraints */

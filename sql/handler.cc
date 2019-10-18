@@ -5098,6 +5098,77 @@ int handler::calculate_checksum()
 ** Some general functions that isn't in the handler class
 ****************************************************************************/
 
+bool TABLE_SHARE::update_foreign_keys(THD *thd, Alter_info *alter_info)
+{
+  DBUG_ASSERT(!foreign_keys);
+  List_iterator_fast<Key> key_it(alter_info->key_list);
+  MEM_ROOT *old_root= thd->mem_root;
+  thd->mem_root= &mem_root;
+  while (Key* key= key_it++)
+  {
+    if (key->type != Key::FOREIGN_KEY)
+      continue;
+
+    if (!foreign_keys)
+    {
+      foreign_keys= (List <FOREIGN_KEY_INFO> *) alloc_root(
+        &mem_root, sizeof(List <FOREIGN_KEY_INFO>));
+      if (unlikely(!foreign_keys))
+      {
+        my_error(ER_OUT_OF_RESOURCES, MYF(0));
+        thd->mem_root= old_root;
+        return true;
+      }
+      foreign_keys->empty();
+    }
+
+    Foreign_key *src= static_cast<Foreign_key*>(key);
+    FOREIGN_KEY_INFO *dst= (FOREIGN_KEY_INFO *) alloc_root(
+      &mem_root, sizeof(FOREIGN_KEY_INFO));
+    if (unlikely(foreign_keys->push_back(dst)))
+    {
+      my_error(ER_OUT_OF_RESOURCES, MYF(0));
+      thd->mem_root= old_root;
+      return true;
+    }
+    dst->foreign_id= &src->constraint_name;
+    dst->foreign_db= &db;
+    dst->foreign_table= &table_name;
+    dst->referenced_key_name= &src->name;
+    dst->referenced_db= &src->ref_db;
+    dst->referenced_table= &src->ref_table;
+    dst->update_method= src->update_opt;
+    dst->delete_method= src->delete_opt;
+    dst->foreign_fields.empty();
+    dst->referenced_fields.empty();
+
+    Key_part_spec* col;
+    List_iterator_fast<Key_part_spec> col_it(src->columns);
+    while ((col= col_it++))
+    {
+      if (unlikely(dst->foreign_fields.push_back(&col->field_name)))
+      {
+        my_error(ER_OUT_OF_RESOURCES, MYF(0));
+        thd->mem_root= old_root;
+        return true;
+      }
+    }
+
+    col_it.init(src->ref_columns);
+    while ((col= col_it++))
+    {
+      if (unlikely(dst->referenced_fields.push_back(&col->field_name)))
+      {
+        my_error(ER_OUT_OF_RESOURCES, MYF(0));
+        thd->mem_root= old_root;
+        return true;
+      }
+    }
+  }
+  thd->mem_root= old_root;
+  return false;
+}
+
 /**
   Initiates table-file and calls appropriate database-creator.
 
@@ -5108,7 +5179,8 @@ int handler::calculate_checksum()
 */
 int ha_create_table(THD *thd, const char *path,
                     const char *db, const char *table_name,
-                    HA_CREATE_INFO *create_info, LEX_CUSTRING *frm)
+                    HA_CREATE_INFO *create_info, Alter_info *alter_info,
+                    LEX_CUSTRING *frm)
 {
   int error= 1;
   TABLE table;
@@ -5141,6 +5213,9 @@ int ha_create_table(THD *thd, const char *path,
     if (open_table_def(thd, &share))
       goto err;
   }
+
+  if (alter_info && share.update_foreign_keys(thd, alter_info))
+    goto err;
 
   share.m_psi= PSI_CALL_get_table_share(temp_table, &share);
 

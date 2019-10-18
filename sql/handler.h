@@ -3872,35 +3872,6 @@ public:
   */
   virtual bool can_switch_engines() { return true; }
   virtual int can_continue_handler_scan() { return 0; }
-  /**
-    Get the list of foreign keys in this table.
-
-    @remark Returns the set of foreign keys where this table is the
-            dependent or child table.
-
-    @param thd  The thread handle.
-    @param f_key_list[out]  The list of foreign keys.
-
-    @return The handler error code or zero for success.
-  */
-  virtual int
-  get_foreign_key_list(THD *thd, List<FOREIGN_KEY_INFO> *f_key_list)
-  { return 0; }
-  /**
-    Get the list of foreign keys referencing this table.
-
-    @remark Returns the set of foreign keys where this table is the
-            referenced or parent table.
-
-    @param thd  The thread handle.
-    @param f_key_list[out]  The list of foreign keys.
-
-    @return The handler error code or zero for success.
-  */
-  virtual int
-  get_parent_foreign_key_list(THD *thd, List<FOREIGN_KEY_INFO> *f_key_list)
-  { return 0; }
-  virtual uint referenced_by_foreign_key() { return 0;}
   virtual void init_table_handle_for_HANDLER()
   { return; }       /* prepare InnoDB for HANDLER */
   virtual void free_foreign_key_create_info(char* str) {}
@@ -4904,7 +4875,8 @@ void ha_checkpoint_state(bool disable);
 void ha_commit_checkpoint_request(void *cookie, void (*pre_hook)(void *));
 int ha_create_table(THD *thd, const char *path,
                     const char *db, const char *table_name,
-                    HA_CREATE_INFO *create_info, LEX_CUSTRING *frm);
+                    HA_CREATE_INFO *create_info, Alter_info *alter_info,
+                    LEX_CUSTRING *frm);
 int ha_delete_table(THD *thd, handlerton *db_type, const char *path,
                     const LEX_CSTRING *db, const LEX_CSTRING *alias, bool generate_warning);
 void ha_prepare_for_backup();
