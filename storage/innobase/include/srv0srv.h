@@ -828,23 +828,6 @@ too long. These can be used to track bugs which cause hangs.
 */
 void srv_error_monitor_task(void*);
 
-/*********************************************************************//**
-Purge coordinator thread that schedules the purge tasks.
-@return a dummy parameter */
-os_thread_ret_t
-DECLARE_THREAD(srv_purge_coordinator_thread)(
-/*=========================================*/
-	void*	arg MY_ATTRIBUTE((unused)));	/*!< in: a dummy parameter
-						required by os_thread_create */
-
-/*********************************************************************//**
-Worker thread that reads tasks from the work queue and executes them.
-@return a dummy parameter */
-os_thread_ret_t
-DECLARE_THREAD(srv_worker_thread)(
-/*==============================*/
-	void*	arg MY_ATTRIBUTE((unused)));	/*!< in: a dummy parameter
-						required by os_thread_create */
 } /* extern "C" */
 
 /**********************************************************************//**
@@ -854,12 +837,6 @@ ulint
 srv_get_task_queue_length(void);
 /*===========================*/
 
-/** Ensure that a given number of threads of the type given are running
-(or are already terminated).
-@param[in]	type	thread type
-@param[in]	n	number of threads that have to run */
-void
-srv_release_threads(enum srv_thread_type type, ulint n);
 
 /** Wakeup the purge threads. */
 void

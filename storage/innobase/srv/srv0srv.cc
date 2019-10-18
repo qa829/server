@@ -2169,7 +2169,7 @@ void purge_coordinator_timer_callback(void *)
 		purge_state.m_running || !trx_sys.rseg_history_len) {
 		return;
 	}
-#if 0
+
 	if (purge_state.m_history_length < 5000 &&
 		purge_state.m_history_length == trx_sys.rseg_history_len) {
 
@@ -2180,7 +2180,7 @@ void purge_coordinator_timer_callback(void *)
 
 		return;
 	}
-#endif
+
 	purge_state.m_running = 1;
 	purge_coordinator_callback(0);
 }

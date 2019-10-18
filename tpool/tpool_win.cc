@@ -92,6 +92,10 @@ class thread_pool_win : public thread_pool
     native_timer(thread_pool_win &pool, callback_func func, void *data , task_group *group) : 
       m_mtx(),m_task(func, data, group),m_pool(pool),m_period()
     {
+      /* TODO : destructor/disarm needs fixing for the case where
+         task was delayed queued into groups own queue.
+      */
+      assert(!group);
       m_ptp_timer= CreateThreadpoolTimer(timer_callback, this, &pool.m_env);
     }
     void set_time(int initial_delay_ms, int period_ms) override
