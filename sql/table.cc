@@ -9282,6 +9282,51 @@ bool fk_modifies_child(enum_fk_option opt)
   return can_write[opt];
 }
 
+bool TABLE_SHARE::check_and_close_foreign_tables(THD* thd, bool force)
+{
+  DBUG_ASSERT(foreign_keys);
+  List_iterator_fast<FOREIGN_KEY_INFO> it(*foreign_keys);
+  List_iterator_fast<FOREIGN_KEY_INFO> ref_it;
+  while (FOREIGN_KEY_INFO *fk= it++)
+  {
+    if (!cmp(fk->referenced_db, &db) && !cmp(fk->referenced_table, &table_name))
+      continue;
+    TDC_element *el= tdc_lock_share(thd, fk->referenced_db->str, fk->referenced_table->str);
+    if (!el)
+      continue;
+    if (!force && el->share->referenced_by_foreign_key())
+    {
+      FOREIGN_KEY_INFO *ref;
+      ref_it.init(*el->share->referenced_keys);
+      while ((ref= ref_it++))
+      {
+        if (!cmp(ref->foreign_db, &db) && !cmp(ref->foreign_table, &table_name))
+          break;
+      }
+      if (!ref)
+        goto need_close;
+      tdc_unlock_share(el);
+    }
+    else
+    {
+need_close:
+      MDL_request_list mdl_requests;
+      MDL_request target_mdl_request;
+
+      target_mdl_request.init(MDL_key::TABLE,
+                              el->share->db.str, el->share->table_name.str,
+                              MDL_EXCLUSIVE, MDL_STATEMENT);
+      mdl_requests.push_front(&target_mdl_request);
+      tdc_unlock_share(el);
+      if (thd->mdl_context.acquire_locks(&mdl_requests,
+                                         thd->variables.lock_wait_timeout))
+        return true;
+      close_all_tables_for_name(thd, el->share, HA_EXTRA_NOT_USED, NULL);
+    }
+  }
+  return false;
+}
+
 enum TR_table::enabled TR_table::use_transaction_registry= TR_table::MAYBE;
 
 TR_table::TR_table(THD* _thd, bool rw) :

@@ -651,6 +651,7 @@ struct TABLE_SHARE
   {
     return referenced_keys && !referenced_keys->is_empty();
   }
+  bool check_and_close_foreign_tables(THD *thd, bool force= false);
 
   Virtual_column_info **check_constraints;
   uint	*blob_field;			/* Index to blobs in Field arrray*/

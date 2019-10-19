@@ -6270,6 +6270,10 @@ no_such_table:
 			}
 		}
 		mysql_mutex_unlock(&table->s->LOCK_share);
+		if (table->s->foreign_keys
+		    && table->s->check_and_close_foreign_tables(thd)) {
+			DBUG_RETURN(HA_ERR_LOCK_WAIT_TIMEOUT);
+		}
 		if (unlikely(err)) {
 			set_my_errno(ENOMEM);
 			DBUG_RETURN(HA_ERR_OUT_OF_MEM);

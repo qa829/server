@@ -9686,6 +9686,12 @@ do_continue:;
     }
   }
 
+  if (alter_info->flags & ALTER_DROP_FOREIGN_KEY && table->s->foreign_keys)
+  {
+    if (table->s->check_and_close_foreign_tables(thd, true))
+      DBUG_RETURN(true);
+  }
+
   if (handle_if_exists_options(thd, table, alter_info,
                                &create_info->period_info) ||
       fix_constraints_names(thd, &alter_info->check_constraint_list,
