@@ -8174,6 +8174,8 @@ int ha_partition::info(uint flag)
                    ("checking all partitions for auto_increment_value"));
         do
         {
+          if (!bitmap_is_set(&m_opened_partitions, (uint)(file_array - m_file)))
+            continue;
           file= *file_array;
           file->info(HA_STATUS_AUTO | no_lock_flag);
           set_if_bigger(auto_increment_value,
