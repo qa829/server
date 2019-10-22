@@ -2548,8 +2548,12 @@ func_exit:
 			FTS */
 			fts_optimize_remove_table(table);
 			fts_free(table);
-		} else {
+		} else if (fts_optimize_is_init()) {
 			fts_optimize_add_table(table);
+		} else {
+			/* fts_optimize_thread is not started yet.
+			So make the table as non-evictable from cache. */
+			dict_table_move_from_lru_to_non_lru(table);
 		}
 	}
 
