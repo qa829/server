@@ -375,7 +375,7 @@ row_upd_changes_some_index_ord_field_binary(
 @param[in]	thd		mysql thread handle
 @param[in,out]	mysql_table	NULL, or mysql table object when
 				user thread invokes dml */
-void
+dberr_t
 row_upd_store_row(
 	upd_node_t*	node,
 	THD*		thd,
