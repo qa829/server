@@ -76,3 +76,31 @@ id	FTS_DOC_ID	title	body
 1	10	MySQL Tutorial	DBMS stands for DataBase ...
 8	12	MySQL Tutorial	DBMS stands for DataBase ...
 DROP TABLE articles;
+#
+# MDEV-19073 FTS row mismatch after crash recovery
+#
+CREATE TABLE t1(
+id INT UNSIGNED AUTO_INCREMENT NOT NULL PRIMARY KEY,
+title VARCHAR(200),
+body TEXT)ENGINE=InnoDB;
+INSERT INTO t1 (title, body) VALUES
+('MySQL Tutorial', 'DBMS stands for Database...');
+CREATE FULLTEXT INDEX idx ON t1(title, body);
+Warnings:
+Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
+INSERT INTO t1 (title, body) VALUES
+('MariaDB Tutorial', 'DB means Database ...');
+SELECT * FROM t1
+WHERE MATCH (title, body)
+AGAINST ('Database' IN NATURAL LANGUAGE MODE);
+id	title	body
+1	MySQL Tutorial	DBMS stands for Database...
+2	MariaDB Tutorial	DB means Database ...
+# Kill and restart
+SELECT * FROM t1
+WHERE MATCH (title, body)
+AGAINST ('Database' IN NATURAL LANGUAGE MODE);
+id	title	body
+1	MySQL Tutorial	DBMS stands for Database...
+2	MariaDB Tutorial	DB means Database ...
+DROP TABLE t1;

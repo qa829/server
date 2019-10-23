@@ -17,3 +17,30 @@ ALTER TABLE t ADD FULLTEXT INDEX (b(64));
 ERROR HY000: Unknown error
 SET SESSION debug_dbug=@saved_debug_dbug;
 DROP TABLE t;
+#
+# MDEV-19073 FTS row mismatch after crash recovery
+#
+CREATE TABLE t1(
+id INT UNSIGNED AUTO_INCREMENT NOT NULL PRIMARY KEY,
+title VARCHAR(200),
+body TEXT, FULLTEXT(title,body))ENGINE=InnoDB;
+SET GLOBAL debug_dbug="+d,fts_instrument_sync_debug";
+INSERT INTO t1 (title,body) VALUES
+('MySQL Tutorial','DBMS stands for DataBase ...');
+SET GLOBAL debug_dbug="-d,fts_instrument_sync_debug";
+INSERT INTO t1 (title,body) VALUES
+('MariaDB Tutorial','DB means DataBase ...');
+SELECT * FROM t1
+WHERE MATCH (title, body)
+AGAINST ('Database' IN NATURAL LANGUAGE MODE);
+id	title	body
+1	MySQL Tutorial	DBMS stands for DataBase ...
+2	MariaDB Tutorial	DB means DataBase ...
+# Kill and restart
+SELECT * FROM t1
+WHERE MATCH (title, body)
+AGAINST ('Database' IN NATURAL LANGUAGE MODE);
+id	title	body
+1	MySQL Tutorial	DBMS stands for DataBase ...
+2	MariaDB Tutorial	DB means DataBase ...
+DROP TABLE t1;

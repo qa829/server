@@ -116,3 +116,33 @@ SELECT * FROM articles WHERE MATCH (title, body)
         AGAINST ('Tutorial' IN NATURAL LANGUAGE MODE);
 
 DROP TABLE articles;
+
+--echo #
+--echo # MDEV-19073 FTS row mismatch after crash recovery
+--echo #
+
+CREATE TABLE t1(
+	id INT UNSIGNED AUTO_INCREMENT NOT NULL PRIMARY KEY,
+	title VARCHAR(200),
+	body TEXT)ENGINE=InnoDB;
+INSERT INTO t1 (title, body) VALUES
+	('MySQL Tutorial', 'DBMS stands for Database...');
+
+#Create fulltext index
+CREATE FULLTEXT INDEX idx ON t1(title, body);
+INSERT INTO t1 (title, body) VALUES
+	('MariaDB Tutorial', 'DB means Database ...');
+
+# Should return 2 rows
+SELECT * FROM t1
+        WHERE MATCH (title, body)
+        AGAINST ('Database' IN NATURAL LANGUAGE MODE);
+
+--echo # Kill and restart
+let $shutdown_timeout=0;
+--source include/restart_mysqld.inc
+# Should return 2 rows
+SELECT * FROM t1
+        WHERE MATCH (title, body)
+        AGAINST ('Database' IN NATURAL LANGUAGE MODE);
+DROP TABLE t1;
