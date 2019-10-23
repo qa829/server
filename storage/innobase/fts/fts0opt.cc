@@ -34,6 +34,7 @@ Completed 2011/7/10 Sunny and Jimmy Yang
 #include "ut0wqueue.h"
 #include "srv0start.h"
 #include "zlib.h"
+#include "fts0opt.h"
 
 #ifndef UNIV_NONINL
 #include "fts0types.ic"
@@ -41,7 +42,7 @@ Completed 2011/7/10 Sunny and Jimmy Yang
 #endif
 
 /** The FTS optimize thread's work queue. */
-static ib_wqueue_t* fts_optimize_wq;
+ib_wqueue_t* fts_optimize_wq;
 
 /** The FTS vector to store fts_slot_t */
 static ib_vector_t*  fts_slots;
@@ -2618,13 +2619,13 @@ UNIV_INTERN void fts_optimize_add_table(dict_table_t* table)
 
 	msg = fts_optimize_create_msg(FTS_MSG_ADD_TABLE, table);
 
-	ib_wqueue_lock(fts_optimize_wq);
+	mutex_enter(&fts_optimize_wq->mutex);
 
 	ib_wqueue_add(fts_optimize_wq, msg, msg->heap, true);
 
 	table->fts->in_queue = true;
 
-	ib_wqueue_unlock(fts_optimize_wq);
+	mutex_exit(&fts_optimize_wq->mutex);
 }
 
 /**********************************************************************//**
@@ -2641,7 +2642,7 @@ fts_optimize_remove_table(
 	fts_msg_del_t*	remove;
 
 	/* if the optimize system not yet initialized, return */
-	if (!fts_optimize_is_init()) {
+	if (!fts_optimize_wq) {
 		return;
 	}
 
@@ -2653,10 +2654,10 @@ fts_optimize_remove_table(
 		return;
 	}
 
-	ib_wqueue_lock(fts_optimize_wq);
+	mutex_enter(&fts_optimize_wq->mutex);
 
 	if (!table->fts->in_queue) {
-		ib_wqueue_unlock(fts_optimize_wq);
+		mutex_exit(&fts_optimize_wq->mutex);
 		return;
 	}
 
@@ -2674,17 +2675,15 @@ fts_optimize_remove_table(
 
 	ib_wqueue_add(fts_optimize_wq, msg, msg->heap, true);
 
-	ib_wqueue_unlock(fts_optimize_wq);
+	mutex_exit(&fts_optimize_wq->mutex);
 
 	os_event_wait(event);
 
 	os_event_free(event);
 
-	ut_d(ib_wqueue_lock(fts_optimize_wq));
-
+	ut_d(mutex_enter(&fts_optimize_wq->mutex));
 	ut_ad(!table->fts->in_queue);
-
-	ut_d(ib_wqueue_unlock(fts_optimize_wq));
+	ut_d(mutex_exit(&fts_optimize_wq->mutex));
 }
 
 /** Send sync fts cache for the table.
@@ -2697,7 +2696,7 @@ fts_optimize_request_sync_table(
 	fts_msg_t*	msg;
 
 	/* if the optimize system not yet initialized, return */
-	if (!fts_optimize_is_init()) {
+	if (!fts_optimize_wq) {
 		return;
 	}
 
@@ -2711,13 +2710,13 @@ fts_optimize_request_sync_table(
 
 	msg = fts_optimize_create_msg(FTS_MSG_SYNC_TABLE, table);
 
-	ib_wqueue_lock(fts_optimize_wq);
+	mutex_enter(&fts_optimize_wq->mutex);
 
 	ib_wqueue_add(fts_optimize_wq, msg, msg->heap, true);
 
 	table->fts->in_queue = true;
 
-	ib_wqueue_unlock(fts_optimize_wq);
+	mutex_exit(&fts_optimize_wq->mutex);
 }
 
 /** Add a table to fts_slots if it doesn't already exist. */
@@ -2767,9 +2766,9 @@ static bool fts_optimize_del_table(const dict_table_t* table)
 					table->name);
 			}
 
-			ib_wqueue_lock(fts_optimize_wq);
+			mutex_enter(&fts_optimize_wq->mutex);
 			slot->table->fts->in_queue = false;
-			ib_wqueue_unlock(fts_optimize_wq);
+			mutex_exit(&fts_optimize_wq->mutex);
 
 			slot->table = NULL;
 			return true;
@@ -3004,7 +3003,7 @@ fts_optimize_init(void)
 	ut_ad(!srv_read_only_mode);
 
 	/* For now we only support one optimize thread. */
-	ut_a(!fts_optimize_is_init());
+	ut_a(!fts_optimize_wq);
 
 	fts_optimize_wq = ib_wqueue_create();
 	ut_a(fts_optimize_wq != NULL);
@@ -3023,23 +3022,16 @@ fts_optimize_init(void)
 			continue;
 		}
 
+		/* fts_optimize_thread is not started yet. So there is no
+		need to acqquire fts_optimize_wq->mutex for adding the fts
+		table to the fts slots. */
+		ut_ad(!table->can_be_evicted);
 		fts_optimize_new_table(table);
 		table->fts->in_queue = true;
 	}
 
 	mutex_exit(&dict_sys->mutex);
 	os_thread_create(fts_optimize_thread, fts_optimize_wq, NULL);
-}
-
-/**********************************************************************//**
-Check whether the work queue is initialized.
-@return TRUE if optimze queue is initialized. */
-UNIV_INTERN
-ibool
-fts_optimize_is_init(void)
-/*======================*/
-{
-	return(fts_optimize_wq != NULL);
 }
 
 /**********************************************************************//**

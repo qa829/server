@@ -633,14 +633,6 @@ void
 fts_optimize_init(void);
 /*====================*/
 
-/**********************************************************************//**
-Check whether the work queue is initialized.
-@return TRUE if optimze queue is initialized. */
-UNIV_INTERN
-ibool
-fts_optimize_is_init(void);
-/*======================*/
-
 /****************************************************************//**
 Drops index ancillary tables for a FTS index
 @return DB_SUCCESS or error code */
