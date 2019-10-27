@@ -214,6 +214,8 @@ IF (WITH_ASAN)
   IF(NOT WITH_ASAN_OK)
     MESSAGE(FATAL_ERROR "Do not know how to enable address sanitizer")
   ENDIF()
+
+  CHECK_INCLUDE_FILE (sanitizer/asan_interface.h HAVE_SANITIZER_ASAN_INTERFACE_H)
 ENDIF()
 
 OPTION(WITH_UBSAN "Enable undefined behavior sanitizer" OFF)

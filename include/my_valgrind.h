@@ -37,7 +37,7 @@
 # define MEM_CHECK_ADDRESSABLE(a,len) VALGRIND_CHECK_MEM_IS_ADDRESSABLE(a,len)
 # define MEM_CHECK_DEFINED(a,len) VALGRIND_CHECK_MEM_IS_DEFINED(a,len)
 # define REDZONE_SIZE 8
-#elif defined(__SANITIZE_ADDRESS__)
+#elif defined(__SANITIZE_ADDRESS__) && defined(HAVE_SANITIZER_ASAN_INTERFACE_H)
 # include <sanitizer/asan_interface.h>
 /* How to do manual poisoning:
 https://github.com/google/sanitizers/wiki/AddressSanitizerManualPoisoning */
