@@ -74,9 +74,10 @@ class thread_pool_win : public thread_pool
   {
     std::mutex m_mtx;
     PTP_TIMER m_ptp_timer;
-    task m_task;
+    waitable_task m_task;
     thread_pool_win& m_pool;
     int m_period;
+    bool m_on;
 
     static void CALLBACK timer_callback(PTP_CALLBACK_INSTANCE callback_instance, void *context,
                                         PTP_TIMER callback_timer)
@@ -89,24 +90,41 @@ class thread_pool_win : public thread_pool
     }
 
   public:
-    native_timer(thread_pool_win &pool, callback_func func, void *data , task_group *group) : 
-      m_mtx(),m_task(func, data, group),m_pool(pool),m_period()
+      native_timer(thread_pool_win& pool, callback_func func, void* data, task_group* group) :
+          m_mtx(), m_task(func, data, group), m_pool(pool), m_period(), m_on(true)
     {
-      /* TODO : destructor/disarm needs fixing for the case where
-         task was delayed queued into groups own queue.
-      */
-      assert(!group);
       m_ptp_timer= CreateThreadpoolTimer(timer_callback, this, &pool.m_env);
     }
     void set_time(int initial_delay_ms, int period_ms) override
     {
-       long long initial_delay = -10000LL * initial_delay_ms;;
-       SetThreadpoolTimer(m_ptp_timer, (PFILETIME)& initial_delay, 0, 100);
+       if (!m_on)
+         return;
+
+       long long initial_delay = -10000LL * initial_delay_ms;
+
+       m_task.add_ref();
+       if (SetThreadpoolTimerEx(m_ptp_timer, (PFILETIME)& initial_delay, 0, 100))
+       {
+         /* Previous callback was cancelled, decrement ref counter. */
+         m_task.release();
+       }
+
        m_period = period_ms;
     }
     void disarm() override
     {
-      SetThreadpoolTimer(m_ptp_timer, nullptr, 0, 0);
+      m_on = false;
+      if (SetThreadpoolTimerEx(m_ptp_timer, nullptr, 0, 0))
+      {
+          /* Callback was cancelled, decrement ref counter */
+          m_task.release();
+      }
+      if (m_task.is_running() && m_task.m_group)
+      {
+          /* Remove task from the group's queue */
+          m_task.m_group->cancel_pending(&m_task);
+      }
+      m_task.wait();
       /* Don't do it in timer callback, that will hang*/
       WaitForThreadpoolTimerCallbacks(m_ptp_timer, TRUE);
     }
