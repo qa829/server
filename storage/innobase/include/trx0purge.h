@@ -224,7 +224,7 @@ public:
     uninitialised. Real initialisation happens in create().
   */
 
-  purge_sys_t():m_enabled(false),m_initialized(false) {}
+  purge_sys_t():m_initialized(false),m_enabled(false) {}
 
 
   /** Create the instance */
