@@ -1,5 +1,7 @@
 include/master-slave.inc
 [connection master]
+set @old_innodb_adaptive_hash_index = @@innodb_adaptive_hash_index;
+set global innodb_adaptive_hash_index=ON;
 create table t1 (a int) engine=innodb;
 create table t2 (b longblob) engine=innodb;
 create table t3 (c int) engine=innodb;
@@ -29,4 +31,5 @@ drop table t2, t3;
 connection master;
 set debug_sync='RESET';
 drop table t2, t3;
+set global innodb_adaptive_hash_index = @old_innodb_adaptive_hash_index;
 include/rpl_end.inc
