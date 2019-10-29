@@ -183,7 +183,7 @@ A performance schema instrumented wrapper function for os_file_close().
 UNIV_INLINE
 bool
 pfs_os_file_close_func(
-	pfs_os_file_t	file,
+	const pfs_os_file_t&	file,
 	const char*	src_file,
 	uint		src_line)
 {
@@ -229,7 +229,7 @@ pfs_os_aio_func(
 	IORequest&	type,
 	ulint		mode,
 	const char*	name,
-	pfs_os_file_t	file,
+	const pfs_os_file_t&	file,
 	void*		buf,
 	os_offset_t	offset,
 	ulint		n,
@@ -274,7 +274,7 @@ UNIV_INLINE
 dberr_t
 pfs_os_file_read_func(
 	const IORequest&	type,
-	pfs_os_file_t		file,
+	const pfs_os_file_t&	file,
 	void*			buf,
 	os_offset_t		offset,
 	ulint			n,
@@ -316,7 +316,7 @@ UNIV_INLINE
 dberr_t
 pfs_os_file_read_no_error_handling_func(
 	const IORequest&	type,
-	pfs_os_file_t		file,
+	const pfs_os_file_t&	file,
 	void*			buf,
 	os_offset_t		offset,
 	ulint			n,
@@ -358,7 +358,7 @@ dberr_t
 pfs_os_file_write_func(
 	const IORequest&	type,
 	const char*		name,
-	pfs_os_file_t		file,
+	const pfs_os_file_t&		file,
 	const void*		buf,
 	os_offset_t		offset,
 	ulint			n,
@@ -393,7 +393,7 @@ Flushes the write buffers of a given file to the disk.
 UNIV_INLINE
 bool
 pfs_os_file_flush_func(
-	pfs_os_file_t	file,
+	const pfs_os_file_t&	file,
 	const char*	src_file,
 	uint		src_line)
 {

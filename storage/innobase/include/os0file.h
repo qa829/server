@@ -38,6 +38,7 @@ Created 10/21/1995 Heikki Tuuri
 
 #include "fsp0types.h"
 #include "os0api.h"
+#include "tpool.h"
 
 #ifndef _WIN32
 #include <dirent.h>
@@ -66,7 +67,7 @@ the OS actually supports it: Win 95 does not, NT does. */
 # define UNIV_NON_BUFFERED_IO
 
 /** File handle */
-typedef HANDLE os_file_t;
+typedef native_file_handle os_file_t;
 
 
 #else /* _WIN32 */
@@ -102,6 +103,14 @@ struct pfs_os_file_t
 	/** Assignment operator.
 	@param[in]	file	file handle to be assigned */
 	void operator=(os_file_t file) { m_file = file; }
+	bool operator==(const os_file_t& file) const { return m_file == file; }
+	bool operator!=(const os_file_t& file) const { return !(*this == file); }
+#ifndef DBUG_OFF
+	friend std::ostream& operator<<(std::ostream& os, const pfs_os_file_t& f){
+		os << os_file_t(f);
+		return os;
+	}
+#endif
 };
 
 /** The next value should be smaller or equal to the smallest sector size used
@@ -206,14 +215,6 @@ public:
 		/** Disable partial read warnings */
 		DISABLE_PARTIAL_IO_WARNINGS = 32,
 
-		/** Do not to wake i/o-handler threads, but the caller will do
-		the waking explicitly later, in this way the caller can post
-		several requests in a batch; NOTE that the batch must not be
-		so big that it exhausts the slots in AIO arrays! NOTE that
-		a simulated batch may introduce hidden chances of deadlocks,
-		because I/Os are not actually handled until all
-		have been posted: use with great caution! */
-		DO_NOT_WAKE = 64,
 
 		/** Ignore failed reads of non-existent pages */
 		IGNORE_MISSING = 128,
@@ -296,13 +297,6 @@ public:
 		return((m_type & LOG) == LOG);
 	}
 
-	/** @return true if the simulated AIO thread should be woken up */
-	bool is_wake() const
-		MY_ATTRIBUTE((warn_unused_result))
-	{
-		return((m_type & DO_NOT_WAKE) == 0);
-	}
-
 	/** Clear the punch hole flag */
 	void clear_punch_hole()
 	{
@@ -350,12 +344,6 @@ public:
 		if (is_punch_hole_supported()) {
 			m_type |= PUNCH_HOLE;
 		}
-	}
-
-	/** Clear the do not wake flag */
-	void clear_do_not_wake()
-	{
-		m_type &= ~DO_NOT_WAKE;
 	}
 
 	/** Set the pointer to file node for IO
@@ -412,7 +400,7 @@ public:
 	@param[in]	off		Starting offset (SEEK_SET)
 	@param[in]	len		Size of the hole
 	@return DB_SUCCESS or error code */
-	dberr_t punch_hole(os_file_t fh, os_offset_t off, ulint len);
+	dberr_t punch_hole(const os_file_t& fh, os_offset_t off, ulint len);
 
 private:
 	/** Page to be written on write operation. */
@@ -438,24 +426,19 @@ struct os_file_size_t {
 };
 
 /** Win NT does not allow more than 64 */
-static const ulint OS_AIO_N_PENDING_IOS_PER_THREAD = 32;
+static const ulint OS_AIO_N_PENDING_IOS_PER_THREAD = 256;
 
 /** Modes for aio operations @{ */
 /** Normal asynchronous i/o not for ibuf pages or ibuf bitmap pages */
 static const ulint OS_AIO_NORMAL = 21;
 
-/**  Asynchronous i/o for ibuf pages or ibuf bitmap pages */
-static const ulint OS_AIO_IBUF = 22;
-
 /** Asynchronous i/o for the log */
 static const ulint OS_AIO_LOG = 23;
 
-/** Asynchronous i/o where the calling thread will itself wait for
-the i/o to complete, doing also the job of the i/o-handler thread;
+/**Calling thread will wait for the i/o to complete,
+and perform IO completion routine itself;
 can be used for any pages, ibuf or non-ibuf.  This is used to save
-CPU time, as we can do with fewer thread switches. Plain synchronous
-I/O is not as good, because it must serialize the file seek and read
-or write, causing a bottleneck for parallelism. */
+CPU time, as we can do with fewer thread switches. */
 static const ulint OS_AIO_SYNC = 24;
 /* @} */
 
@@ -678,7 +661,7 @@ os_file_get_last_error.
 @param[in]	file		own: handle to a file
 @return true if success */
 bool
-os_file_close_func(os_file_t file);
+os_file_close_func(const os_file_t& file);
 
 #ifdef UNIV_PFS_IO
 
@@ -932,7 +915,7 @@ A performance schema instrumented wrapper function for os_file_close().
 UNIV_INLINE
 bool
 pfs_os_file_close_func(
-	pfs_os_file_t	file,
+	const pfs_os_file_t&	file,
 	const char*	src_file,
 	uint		src_line);
 
@@ -952,7 +935,7 @@ UNIV_INLINE
 dberr_t
 pfs_os_file_read_func(
 	const IORequest&	type,
-	pfs_os_file_t		file,
+	const pfs_os_file_t&		file,
 	void*			buf,
 	os_offset_t		offset,
 	ulint			n,
@@ -977,7 +960,7 @@ UNIV_INLINE
 dberr_t
 pfs_os_file_read_no_error_handling_func(
 	const IORequest&	type,
-	pfs_os_file_t		file,
+	const pfs_os_file_t&		file,
 	void*			buf,
 	os_offset_t		offset,
 	ulint			n,
@@ -1013,7 +996,7 @@ pfs_os_aio_func(
 	IORequest&	type,
 	ulint		mode,
 	const char*	name,
-	pfs_os_file_t	file,
+	const pfs_os_file_t&	file,
 	void*		buf,
 	os_offset_t	offset,
 	ulint		n,
@@ -1042,7 +1025,7 @@ dberr_t
 pfs_os_file_write_func(
 	const IORequest&	type,
 	const char*		name,
-	pfs_os_file_t		file,
+	const pfs_os_file_t&		file,
 	const void*		buf,
 	os_offset_t		offset,
 	ulint			n,
@@ -1061,7 +1044,7 @@ Flushes the write buffers of a given file to the disk.
 UNIV_INLINE
 bool
 pfs_os_file_flush_func(
-	pfs_os_file_t	file,
+	const pfs_os_file_t&	file,
 	const char*	src_file,
 	uint		src_line);
 
@@ -1183,7 +1166,7 @@ os_file_get_size(
 @return file size, or (os_offset_t) -1 on failure */
 os_offset_t
 os_file_get_size(
-	os_file_t	file)
+	const os_file_t&	file)
 	MY_ATTRIBUTE((warn_unused_result));
 
 /** Extend a file.
@@ -1204,7 +1187,7 @@ of file.
 bool
 os_file_set_size(
 	const char*	name,
-	os_file_t	file,
+	const os_file_t&	file,
 	os_offset_t	size,
 	bool		is_sparse = false)
 	MY_ATTRIBUTE((warn_unused_result));
@@ -1225,7 +1208,7 @@ os_file_set_eof(
 bool
 os_file_truncate(
 	const char*	pathname,
-	os_file_t	file,
+	const os_file_t&	file,
 	os_offset_t	size,
 	bool		allow_shrink = false);
 
@@ -1236,7 +1219,7 @@ Flushes the write buffers of a given file to the disk.
 @return true if success */
 bool
 os_file_flush_func(
-	os_file_t	file);
+	const os_file_t&	file);
 
 /** Retrieves the last error number if an error occurs in a file io function.
 The number should be retrieved before any other OS calls (because they may
@@ -1261,7 +1244,7 @@ Requests a synchronous read operation.
 dberr_t
 os_file_read_func(
 	const IORequest&	type,
-	os_file_t		file,
+	const os_file_t&		file,
 	void*			buf,
 	os_offset_t		offset,
 	ulint			n)
@@ -1293,7 +1276,7 @@ any error handling. In case of error it returns FALSE.
 dberr_t
 os_file_read_no_error_handling_func(
 	const IORequest&	type,
-	os_file_t		file,
+	const os_file_t&		file,
 	void*			buf,
 	os_offset_t		offset,
 	ulint			n,
@@ -1313,7 +1296,7 @@ dberr_t
 os_file_write_func(
 	const IORequest&	type,
 	const char*		name,
-	os_file_t		file,
+  const os_file_t&		file,
 	const void*		buf,
 	os_offset_t		offset,
 	ulint			n)
@@ -1396,6 +1379,12 @@ Frees the asynchronous io system. */
 void
 os_aio_free();
 
+struct os_aio_userdata_t
+{
+	fil_node_t* node;
+	IORequest	type;
+	void* message;
+};
 /**
 NOTE! Use the corresponding macro os_aio(), not directly this function!
 Requests an asynchronous i/o operation.
@@ -1420,7 +1409,7 @@ os_aio_func(
 	IORequest&	type,
 	ulint		mode,
 	const char*	name,
-	pfs_os_file_t	file,
+	const pfs_os_file_t&	file,
 	void*		buf,
 	os_offset_t	offset,
 	ulint		n,
@@ -1428,47 +1417,12 @@ os_aio_func(
 	fil_node_t*	m1,
 	void*		m2);
 
-/** Wakes up all async i/o threads so that they know to exit themselves in
-shutdown. */
-void
-os_aio_wake_all_threads_at_shutdown();
 
 /** Waits until there are no pending writes in os_aio_write_array. There can
 be other, synchronous, pending writes. */
 void
 os_aio_wait_until_no_pending_writes();
 
-/** Wakes up simulated aio i/o-handler threads if they have something to do. */
-void
-os_aio_simulated_wake_handler_threads();
-
-/** This is the generic AIO handler interface function.
-Waits for an aio operation to complete. This function is used to wait the
-for completed requests. The AIO array of pending requests is divided
-into segments. The thread specifies which segment or slot it wants to wait
-for. NOTE: this function will also take care of freeing the aio slot,
-therefore no other thread is allowed to do the freeing!
-@param[in]	segment		the number of the segment in the aio arrays to
-				wait for; segment 0 is the ibuf I/O thread,
-				segment 1 the log I/O thread, then follow the
-				non-ibuf read threads, and as the last are the
-				non-ibuf write threads; if this is
-				ULINT_UNDEFINED, then it means that sync AIO
-				is used, and this parameter is ignored
-@param[out]	m1		the messages passed with the AIO request;
-				note that also in the case where the AIO
-				operation failed, these output parameters
-				are valid and can be used to restart the
-				operation, for example
-@param[out]	m2		callback message
-@param[out]	type		OS_FILE_WRITE or ..._READ
-@return DB_SUCCESS or error code */
-dberr_t
-os_aio_handler(
-	ulint		segment,
-	fil_node_t**	m1,
-	void**		m2,
-	IORequest*	type);
 
 /** Prints info of the aio arrays.
 @param[in/out]	file		file where to print */
@@ -1484,14 +1438,6 @@ no pending io operations. */
 bool
 os_aio_all_slots_free();
 
-#ifdef UNIV_DEBUG
-
-/** Prints all pending IO
-@param[in]	file	file where to print */
-void
-os_aio_print_pending_io(FILE* file);
-
-#endif /* UNIV_DEBUG */
 
 /** This function returns information about the specified file
 @param[in]	path		pathname of the file
@@ -1521,7 +1467,7 @@ Make file sparse, on Windows.
 @param[in]	is_sparse if true, make file sparse,
 			otherwise "unsparse" the file
 @return true on success, false on error */
-bool os_file_set_sparse_win32(os_file_t file, bool is_sparse = true);
+bool os_file_set_sparse_win32(const os_file_t& file, bool is_sparse = true);
 
 /**
 Changes file size on Windows
@@ -1541,7 +1487,7 @@ If file is normal, file system allocates storage.
 bool
 os_file_change_size_win32(
 	const char*	pathname,
-	os_file_t	file,
+	const os_file_t&	file,
 	os_offset_t	size);
 
 #endif /*_WIN32 */
@@ -1553,7 +1499,7 @@ os_file_change_size_win32(
 @return DB_SUCCESS or error code */
 dberr_t
 os_file_punch_hole(
-	os_file_t	fh,
+	const os_file_t&	fh,
 	os_offset_t	off,
 	os_offset_t	len)
 	MY_ATTRIBUTE((warn_unused_result));

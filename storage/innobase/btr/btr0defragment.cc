@@ -71,6 +71,18 @@ The difference between btr_defragment_count and btr_defragment_failures shows
 the amount of effort wasted. */
 Atomic_counter<ulint> btr_defragment_count;
 
+bool btr_defragment_active;
+tpool::timer* btr_defragment_timer;
+struct defragment_chunk_state_t
+{
+	btr_defragment_item_t* m_item;
+	tpool::timer** m_timer;
+};
+
+static defragment_chunk_state_t defragment_chunk_state;
+static void btr_defragment_chunk(void*);
+static void btr_defragment_timer_start();
+
 /******************************************************************//**
 Constructor for btr_defragment_item_t. */
 btr_defragment_item_t::btr_defragment_item_t(
@@ -101,6 +113,10 @@ btr_defragment_init()
 {
 	srv_defragment_interval = 1000000000ULL / srv_defragment_frequency;
 	mutex_create(LATCH_ID_BTR_DEFRAGMENT_MUTEX, &btr_defragment_mutex);
+	defragment_chunk_state.m_item = 0;
+	defragment_chunk_state.m_timer = &btr_defragment_timer;
+	btr_defragment_timer = srv_thread_pool->create_timer(btr_defragment_chunk, &defragment_chunk_state, 0);
+	btr_defragment_active = true;
 }
 
 /******************************************************************//**
@@ -108,6 +124,11 @@ Shutdown defragmentation. Release all resources. */
 void
 btr_defragment_shutdown()
 {
+	if (!btr_defragment_timer)
+		return;
+	delete btr_defragment_timer;
+	btr_defragment_timer = 0;
+
 	mutex_enter(&btr_defragment_mutex);
 	std::list< btr_defragment_item_t* >::iterator iter = btr_defragment_wq.begin();
 	while(iter != btr_defragment_wq.end()) {
@@ -197,6 +218,10 @@ btr_defragment_add_index(
 	btr_defragment_item_t*	item = new btr_defragment_item_t(pcur, event);
 	mutex_enter(&btr_defragment_mutex);
 	btr_defragment_wq.push_back(item);
+	if(btr_defragment_wq.size() == 1){
+		/* Kick off defragmentation work */
+		btr_defragment_timer_start();
+	}
 	mutex_exit(&btr_defragment_mutex);
 	return event;
 }
@@ -674,14 +699,32 @@ btr_defragment_n_pages(
 	return current_block;
 }
 
-/** Whether btr_defragment_thread is active */
-bool btr_defragment_thread_active;
 
-/** Merge consecutive b-tree pages into fewer pages to defragment indexes */
-extern "C" UNIV_INTERN
-os_thread_ret_t
-DECLARE_THREAD(btr_defragment_thread)(void*)
+
+void btr_defragment_timer_start() {
+	if (!srv_defragment)
+		return;
+	ut_ad(!btr_defragment_wq.empty());
+
+	btr_defragment_timer->set_time(0, 0);
+}
+
+
+/**
+Callback used by defragment timer
+
+Throttling "sleep", is implemented via rescheduling the
+threadpool timer, which, when fired, will resume the work again,
+where it is left.
+
+The state (current item) is stored in function parameter.
+*/
+static void btr_defragment_chunk(void* arg)
 {
+	defragment_chunk_state_t* state = (defragment_chunk_state_t*)arg;
+	ut_ad(state);
+	ut_ad(state->m_timer);
+
 	btr_pcur_t*	pcur;
 	btr_cur_t*	cursor;
 	dict_index_t*	index;
@@ -690,37 +733,24 @@ DECLARE_THREAD(btr_defragment_thread)(void*)
 	buf_block_t*	last_block;
 
 	while (srv_shutdown_state == SRV_SHUTDOWN_NONE) {
-		ut_ad(btr_defragment_thread_active);
-
-		/* If defragmentation is disabled, sleep before
-		checking whether it's enabled. */
-		if (!srv_defragment) {
-			os_thread_sleep(BTR_DEFRAGMENT_SLEEP_IN_USECS);
-			continue;
-		}
-		/* The following call won't remove the item from work queue.
-		We only get a pointer to it to work on. This will make sure
-		when user issue a kill command, all indices are in the work
-		queue to be searched. This also means that the user thread
-		cannot directly remove the item from queue (since we might be
-		using it). So user thread only marks index as removed. */
-		btr_defragment_item_t* item = btr_defragment_get_item();
-		/* If work queue is empty, sleep and check later. */
-		if (!item) {
-			os_thread_sleep(BTR_DEFRAGMENT_SLEEP_IN_USECS);
-			continue;
+		if (!state->m_item) {
+			state->m_item = btr_defragment_get_item();
 		}
 		/* If an index is marked as removed, we remove it from the work
 		queue. No other thread could be using this item at this point so
 		it's safe to remove now. */
-		if (item->removed) {
-			btr_defragment_remove_item(item);
-			continue;
+		while (state->m_item && state->m_item->removed) {
+			btr_defragment_remove_item(state->m_item);
+			state->m_item = btr_defragment_get_item();
+		}
+		if (!state->m_item) {
+			/* Queue empty */
+			return;
 		}
 
-		pcur = item->pcur;
+		pcur = state->m_item->pcur;
 		ulonglong now = my_interval_timer();
-		ulonglong elapsed = now - item->last_processed;
+		ulonglong elapsed = now - state->m_item->last_processed;
 
 		if (elapsed < srv_defragment_interval) {
 			/* If we see an index again before the interval
@@ -729,12 +759,12 @@ DECLARE_THREAD(btr_defragment_thread)(void*)
 			defragmentation of all indices queue up on a single
 			thread, it's likely other indices that follow this one
 			don't need to sleep again. */
-			os_thread_sleep(static_cast<ulint>
-					((srv_defragment_interval - elapsed)
-					 / 1000));
+			int sleep_ms = (int)((srv_defragment_interval - elapsed) / 1000 / 1000);
+			if (sleep_ms) {
+				(*state->m_timer)->set_time(sleep_ms, 0);
+				return;
+			}
 		}
-
-		now = my_interval_timer();
 		mtr_start(&mtr);
 		cursor = btr_pcur_get_btr_cur(pcur);
 		index = btr_cur_get_index(cursor);
@@ -763,7 +793,7 @@ DECLARE_THREAD(btr_defragment_thread)(void*)
 			btr_pcur_store_position(pcur, &mtr);
 			mtr_commit(&mtr);
 			/* Update the last_processed time of this index. */
-			item->last_processed = now;
+			state->m_item->last_processed = now;
 		} else {
 			dberr_t err = DB_SUCCESS;
 			mtr_commit(&mtr);
@@ -786,11 +816,8 @@ DECLARE_THREAD(btr_defragment_thread)(void*)
 				}
 			}
 
-			btr_defragment_remove_item(item);
+			btr_defragment_remove_item(state->m_item);
+			state->m_item = NULL;
 		}
 	}
-
-	btr_defragment_thread_active = false;
-	os_thread_exit();
-	OS_THREAD_DUMMY_RETURN;
 }

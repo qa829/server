@@ -89,6 +89,11 @@ mysql_pfs_key_t page_cleaner_thread_key;
 /** Event to synchronise with the flushing. */
 os_event_t	buf_flush_event;
 
+static void pc_flush_slot_func(void *);
+static tpool::task_group page_cleaner_task_group(1);
+static tpool::waitable_task pc_flush_slot_task(
+	pc_flush_slot_func, 0, &page_cleaner_task_group);
+
 /** State for page cleaner array slot */
 enum page_cleaner_state_t {
 	/** Not requested any yet.
@@ -185,6 +190,9 @@ struct page_cleaner_t {
 						have been disabled */
 #endif /* UNIV_DEBUG */
 };
+
+static void pc_submit_task();
+static void pc_wait_all_tasks();
 
 static page_cleaner_t	page_cleaner;
 
@@ -946,8 +954,8 @@ buf_flush_init_for_writing(
 }
 
 /********************************************************************//**
-Does an asynchronous write of a buffer page. NOTE: in simulated aio and
-also when the doublewrite buffer is used, we must call
+Does an asynchronous write of a buffer page. NOTE: when the
+doublewrite buffer is used, we must call
 buf_dblwr_flush_buffered_writes after we have posted a batch of
 writes! */
 static
@@ -1046,7 +1054,7 @@ buf_flush_write_block_low(
 		&& space->use_doublewrite();
 
 	if (!use_doublewrite) {
-		ulint	type = IORequest::WRITE | IORequest::DO_NOT_WAKE;
+		ulint	type = IORequest::WRITE;
 
 		IORequest	request(type, bpage);
 
@@ -1100,9 +1108,7 @@ buf_flush_write_block_low(
 
 /********************************************************************//**
 Writes a flushable page asynchronously from the buffer pool to a file.
-NOTE: in simulated aio we must call
-os_aio_simulated_wake_handler_threads after we have posted a batch of
-writes! NOTE: buf_pool->mutex and buf_page_get_mutex(bpage) must be
+NOTE: buf_pool->mutex and buf_page_get_mutex(bpage) must be
 held upon entering this function, and they will be released by this
 function if it returns true.
 @return TRUE if the page was flushed */
@@ -1931,8 +1937,6 @@ buf_flush_end(
 
 	if (!srv_read_only_mode) {
 		buf_dblwr_flush_buffered_writes();
-	} else {
-		os_aio_simulated_wake_handler_threads();
 	}
 }
 
@@ -2722,8 +2726,10 @@ pc_request(
 	page_cleaner.n_slots_flushing = 0;
 	page_cleaner.n_slots_finished = 0;
 
-	os_event_set(page_cleaner.is_requested);
-
+	/* ´Submit slots-1 tasks, coordinator also does the work itself */
+	for (ulint i = 0; i < page_cleaner.n_slots - 1; i++) {
+		pc_submit_task();
+	}
 	mutex_exit(&page_cleaner.mutex);
 }
 
@@ -2847,6 +2853,7 @@ pc_wait_finished(
 	ulint*	n_flushed_lru,
 	ulint*	n_flushed_list)
 {
+	pc_wait_all_tasks();
 	bool	all_succeeded = true;
 
 	*n_flushed_lru = 0;
@@ -2956,18 +2963,6 @@ void buf_flush_page_cleaner_disabled_debug_update(THD*,
 		}
 
 		innodb_page_cleaner_disabled_debug = false;
-
-		/* Enable page cleaner threads. */
-		while (srv_shutdown_state == SRV_SHUTDOWN_NONE) {
-			mutex_enter(&page_cleaner.mutex);
-			const ulint n = page_cleaner.n_disabled_debug;
-			mutex_exit(&page_cleaner.mutex);
-			/* Check if all threads have been enabled, to avoid
-			problem when we decide to re-disable them soon. */
-			if (n == 0) {
-				break;
-			}
-		}
 		return;
 	}
 
@@ -2976,34 +2971,7 @@ void buf_flush_page_cleaner_disabled_debug_update(THD*,
 	}
 
 	innodb_page_cleaner_disabled_debug = true;
-
-	while (srv_shutdown_state == SRV_SHUTDOWN_NONE) {
-		/* Workers are possibly sleeping on is_requested.
-
-		We have to wake them, otherwise they could possibly
-		have never noticed, that they should be disabled,
-		and we would wait for them here forever.
-
-		That's why we have sleep-loop instead of simply
-		waiting on some disabled_debug_event. */
-		os_event_set(page_cleaner.is_requested);
-
-		mutex_enter(&page_cleaner.mutex);
-
-		ut_ad(page_cleaner.n_disabled_debug
-		      <= srv_n_page_cleaners);
-
-		if (page_cleaner.n_disabled_debug
-		    == srv_n_page_cleaners) {
-
-			mutex_exit(&page_cleaner.mutex);
-			break;
-		}
-
-		mutex_exit(&page_cleaner.mutex);
-
-		os_thread_sleep(100000);
-	}
+	pc_wait_all_tasks();
 }
 #endif /* UNIV_DEBUG */
 
@@ -3316,7 +3284,7 @@ DECLARE_THREAD(buf_flush_page_cleaner_coordinator)(void*)
 
 	/* At this point all threads including the master and the purge
 	thread must have been suspended. */
-	ut_a(srv_get_active_thread_type() == SRV_NONE);
+	ut_a(!srv_any_background_activity());
 	ut_a(srv_shutdown_state == SRV_SHUTDOWN_FLUSH_PHASE);
 
 	/* We can now make a final sweep on flushing the buffer pool
@@ -3348,7 +3316,7 @@ DECLARE_THREAD(buf_flush_page_cleaner_coordinator)(void*)
 	} while (!success || n_flushed > 0);
 
 	/* Some sanity checks */
-	ut_a(srv_get_active_thread_type() == SRV_NONE);
+	ut_a(!srv_any_background_activity());
 	ut_a(srv_shutdown_state == SRV_SHUTDOWN_FLUSH_PHASE);
 
 	for (ulint i = 0; i < srv_buf_pool_instances; i++) {
@@ -3363,13 +3331,7 @@ thread_exit:
 	and no more access to page_cleaner structure by them.
 	Wakes worker threads up just to make them exit. */
 	page_cleaner.is_running = false;
-
-	/* waiting for all worker threads exit */
-	while (page_cleaner.n_workers) {
-		os_event_set(page_cleaner.is_requested);
-		os_thread_sleep(10000);
-	}
-
+	pc_wait_all_tasks();
 	mutex_destroy(&page_cleaner.mutex);
 
 	os_event_destroy(page_cleaner.is_finished);
@@ -3386,33 +3348,39 @@ thread_exit:
 	OS_THREAD_DUMMY_RETURN;
 }
 
+static void pc_flush_slot_func(void*)
+{
+	pc_flush_slot();
+}
+
+
 /** Adjust thread count for page cleaner workers.
 @param[in]	new_cnt		Number of threads to be used */
 void
 buf_flush_set_page_cleaner_thread_cnt(ulong new_cnt)
 {
 	mutex_enter(&page_cleaner.mutex);
-
+	page_cleaner_task_group.set_max_tasks((uint)new_cnt);
 	srv_n_page_cleaners = new_cnt;
-	if (new_cnt > page_cleaner.n_workers) {
-		/* User has increased the number of page
-		cleaner threads. */
-		ulint add = new_cnt - page_cleaner.n_workers;
-		for (ulint i = 0; i < add; i++) {
-			os_thread_id_t cleaner_thread_id;
-			os_thread_create(buf_flush_page_cleaner_worker, NULL, &cleaner_thread_id);
-		}
-	}
 
 	mutex_exit(&page_cleaner.mutex);
 
-	/* Wait until defined number of workers has started. */
-	while (page_cleaner.is_running &&
-	       page_cleaner.n_workers != (srv_n_page_cleaners - 1)) {
-		os_event_set(page_cleaner.is_requested);
-		os_event_reset(page_cleaner.is_started);
-		os_event_wait_time(page_cleaner.is_started, 1000000);
-	}
+
+}
+
+
+void pc_submit_task()
+{
+#ifdef UNIV_DEBUG
+	if (innodb_page_cleaner_disabled_debug)
+		return;
+#endif
+	srv_thread_pool->submit_task(&pc_flush_slot_task);
+}
+
+void pc_wait_all_tasks()
+{
+	pc_flush_slot_task.wait();
 }
 
 /******************************************************************//**
