@@ -4793,6 +4793,48 @@ void destroy_thd(MYSQL_THD thd)
   delete thd;
 }
 
+/**
+  Create a THD that only has auxilliary functions
+  It will never be added to the global connection list
+  server_threads. It does not represent any client connection.
+
+  It should never be counted, because it will stall the
+  shutdown. It is solely for engine's internal use,
+  like for example, evaluation of virtual function in innodb
+  purge.
+*/
+MYSQL_THD create_background_thd()
+{
+	THD* thd = new THD(next_thread_id());
+	thd->set_command(COM_DAEMON);
+	thd->system_thread = SYSTEM_THREAD_GENERIC;
+	thd->security_ctx->host_or_ip = "";
+	/*
+	Workaround the adverse effect incrementing thread_count in THD() constructor.
+	We do not want these THDs to be counted, or waited for on shutdown.
+	*/
+	thread_count--;
+	return thd;
+}
+
+
+/*
+  Destroy a THD that was previously created by
+  create_background_thd()
+*/
+void destroy_background_thd(MYSQL_THD thd)
+{
+	/*
+	Workaround the adverse effect decrementing thread_count on THD()
+	destructor.
+	We already decremented it in create_background_thd(), so in order for it
+	not to go negative, we'd have to increment it, again.
+	*/
+	thread_count++;
+	delete thd;
+}
+
+
 void reset_thd(MYSQL_THD thd)
 {
   close_thread_tables(thd);
@@ -4899,6 +4941,19 @@ thd_need_wait_reports(const MYSQL_THD thd)
   if (!rgi)
     return false;
   return rgi->is_parallel_exec;
+}
+
+
+/* Used by Innodb purge threads*/
+extern "C" void thd_attach_thd(THD* thd)
+{
+  thd->thread_stack= (char*)&thd;
+  thd->store_globals();
+}
+
+extern "C" void thd_detach_thd(THD * thd)
+{
+  thd->mysys_var = 0;
 }
 
 /*
