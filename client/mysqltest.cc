@@ -5196,7 +5196,6 @@ void do_shutdown_server(struct st_command *command)
       die("Pidfile didn't contain a valid number");
   }
   DBUG_PRINT("info", ("Got pid %d", pid));
-
   /*
     If timeout == 0, it means we should kill the server hard, without
     any shutdown or core (SIGKILL)
@@ -5208,9 +5207,33 @@ void do_shutdown_server(struct st_command *command)
         - If server is not dead within new timeout       
           - kill SIGKILL
   */
+#ifdef _WIN32
+  HANDLE hProcess= OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
+  if (!hProcess || hProcess == INVALID_HANDLE_VALUE)
+    die("OpenProcess(PROCESS_ALL_ACCESS, FALSE, %d) failed with %lu", pid, GetLastError());
+
+  if (!timeout)
+  {
+    if (!TerminateProcess(hProcess, 9))
+      die("TerminateProcess() failed with %lu", GetLastError());
+    CloseHandle(hProcess);
+    DBUG_VOID_RETURN;
+  }
+#endif
 
   if (timeout && mysql_shutdown(mysql, SHUTDOWN_DEFAULT))
     die("mysql_shutdown failed");
+
+#ifdef _WIN32
+  DBUG_ASSERT(timeout);
+  if (WaitForSingleObject(hProcess, timeout * 1000) != 0)
+  {
+    DebugBreakProcess(hProcess);
+    if (WaitForSingleObject(hProcess, MIN(timeout * 1000, 5000)) != 0)
+      TerminateProcess(hProcess, 201);
+  }
+  CloseHandle(hProcess);
+#else
 
   if (!timeout || wait_until_dead(pid, timeout))
   {
@@ -5222,6 +5245,7 @@ void do_shutdown_server(struct st_command *command)
       (void) my_kill(pid, SIGKILL);
     }
   }
+#endif
   DBUG_VOID_RETURN;
 }
 

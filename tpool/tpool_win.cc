@@ -151,7 +151,7 @@ class thread_pool_win : public thread_pool
     */
     virtual int submit_io(aiocb* cb) override
     {
-      memset((aiocb *)cb, 0, sizeof(OVERLAPPED));
+      memset((OVERLAPPED *)cb, 0, sizeof(OVERLAPPED));
 
       ULARGE_INTEGER uli;
       uli.QuadPart = cb->m_offset;

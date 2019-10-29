@@ -46,7 +46,6 @@ class tpool_generic_win_aio : public aio
   /* The worker pool where completion routine is executed, as task. */
   thread_pool* m_pool;
 public:
- 
   tpool_generic_win_aio(thread_pool* pool, int max_io) : m_pool(pool)
   {
     m_completion_port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);
@@ -105,7 +104,7 @@ public:
 
   virtual int submit_io(aiocb* cb) override
   {
-    memset(cb, 0, sizeof(OVERLAPPED));
+    memset((OVERLAPPED *)cb, 0, sizeof(OVERLAPPED));
     cb->m_internal = this;
     ULARGE_INTEGER uli;
     uli.QuadPart = cb->m_offset;
