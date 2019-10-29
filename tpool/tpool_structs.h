@@ -45,9 +45,16 @@ template<typename T> class cache
   std::vector<T>  m_base;
   std::vector<T*> m_cache;
   cache_notification_mode m_notification_mode;
+  int m_waiters;
+
+  bool is_full()
+  {
+    return m_cache.size() == m_base.size();
+  }
+
 public:
-  cache(size_t count, cache_notification_mode mode= NOTIFY_ALL):
-  m_mtx(), m_cv(), m_base(count),m_cache(count), m_notification_mode(mode)
+  cache(size_t count, cache_notification_mode mode= tpool::cache_notification_mode::NOTIFY_ALL):
+  m_mtx(), m_cv(), m_base(count),m_cache(count), m_notification_mode(mode),m_waiters()
   {
     for(size_t i = 0 ; i < count; i++)
       m_cache[i]=&m_base[i];
@@ -79,7 +86,19 @@ public:
     if (m_notification_mode == NOTIFY_ONE)
       m_cv.notify_one();
     else if(m_cache.size() == 1)
-      m_cv.notify_all();
+      m_cv.notify_all(); // Signal cache is not empty
+    else if(m_waiters && is_full())
+      m_cv.notify_all(); // Signal cache is full
+  }
+
+  /* Wait until cache is full.*/
+  void wait()
+  {
+    std::unique_lock<std::mutex> lk(m_mtx);
+    m_waiters++;
+    while(!is_full())
+      m_cv.wait(lk);
+    m_waiters--;
   }
 };
 

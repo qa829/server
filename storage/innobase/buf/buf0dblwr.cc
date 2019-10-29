@@ -155,21 +155,11 @@ buf_dblwr_init(
 		ut_zalloc_nokey(buf_size * sizeof(void*)));
 }
 
-static void analyze_hang(void*)
-{
-	char cmdline[1024];
-	sprintf(cmdline, "gdb -p %d -batch -ex \"thread apply all bt\" > 2", getpid());
-	system(cmdline);
-	abort();
-}
-
 /** Create the doublewrite buffer if the doublewrite buffer header
 is not present in the TRX_SYS page.
 @return	whether the operation succeeded
 @retval	true	if the doublewrite buffer exists or was created
 @retval	false	if the creation failed (too small first data file) */
-#include "tp0tp.h"
-#include <tpool.h>
 bool
 buf_dblwr_create()
 {
@@ -228,8 +218,6 @@ too_small:
 	}
 
 	ib::info() << "Doublewrite buffer not found: creating new";
-	auto timer = srv_thread_pool->create_timer(analyze_hang, nullptr, nullptr);
-	timer->set_time(120 * 1000, 0);
 	/* FIXME: After this point, the doublewrite buffer creation
 	is not atomic. The doublewrite buffer should not exist in
 	the InnoDB system tablespace file in the first place.
@@ -258,7 +246,6 @@ too_small:
 			should not matter (just remove all newly created
 			InnoDB files and restart). */
 			mtr.commit();
-			delete timer;
 			return(false);
 		}
 
@@ -348,7 +335,6 @@ too_small:
 	buf_pool_invalidate();
 
 	ib::info() <<  "Doublewrite buffer created";
-	delete timer;
 
 	goto start_again;
 }

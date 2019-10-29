@@ -80,52 +80,33 @@ Created 10/21/1995 Heikki Tuuri
 
 #include <tp0tp.h>
 
-/* Per-operation*/
+/* Per-IO operation environment*/
 class io_env
 {
 private:
-	std::mutex m_mtx;
 	tpool::cache<tpool::aiocb> m_cache;
 	tpool::task_group m_group;
-	std::condition_variable m_cv;
-	int m_pending;
-	int m_waiters;
 public:
 	io_env(int max_submitted_io, int max_callback_concurrency) :
-		m_mtx(),
 		m_cache(max_submitted_io),
-		m_group(max_callback_concurrency),
-		m_pending(), m_waiters()
+		m_group(max_callback_concurrency)
 	{
 	}
 	/* Get cached AIO control block */
 	tpool::aiocb* acquire()
 	{
-		std::lock_guard<std::mutex> lk(m_mtx);
-		m_pending++;
 		return m_cache.get();
 	}
 	/* Release AIO control block back to cache */
 	void release(tpool::aiocb* aiocb)
 	{
-		std::unique_lock<std::mutex> lk(m_mtx);
 		m_cache.put(aiocb);
-
-		/* If someone waits for cache to become full,
-		(which means all IOs are complete), notify him.*/
-		m_pending--;
-		if (m_waiters && !m_pending)
-			m_cv.notify_all();
 	}
 
 	/* Wait for completions of all AIO operations */
 	void wait()
 	{
-		std::unique_lock<std::mutex> lk(m_mtx);
-		m_waiters++;
-		while (m_pending)
-			m_cv.wait(lk);
-		m_waiters--;
+		m_cache.wait();
 	}
 
 	tpool::task_group* get_task_group()
