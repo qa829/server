@@ -1605,7 +1605,8 @@ int ha_myisam::enable_indexes(uint mode)
     param->stats_method= (enum_handler_stats_method)THDVAR(thd, stats_method);
     param->tmpdir=&mysql_tmpdir_list;
 
-    setup_vcols_for_repair(param);
+    if (!thd->is_error())
+      setup_vcols_for_repair(param);
 
     if ((error= (repair(thd,*param,0) != HA_ADMIN_OK)) && param->retry_repair)
     {
