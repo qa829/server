@@ -5088,9 +5088,9 @@ static int my_kill(int pid, int sig)
 {
   DBUG_PRINT("info", ("Killing server, pid: %d", pid));
 #ifdef _WIN32
-#define SIGKILL 9 /* ignored anyway, see below */
+#define SIGKILL 9
   HANDLE proc;
-  if ((proc= OpenProcess(SYNCHRONIZE|PROCESS_TERMINATE, FALSE, pid)) == NULL)
+  if ((proc= OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid)) == NULL)
     return -1;
   if (sig == 0)
   {
@@ -5098,7 +5098,10 @@ static int my_kill(int pid, int sig)
     CloseHandle(proc);
     return wait_result == WAIT_OBJECT_0?-1:0;
   }
-  (void)TerminateProcess(proc, 201);
+  else if (sig == SIGKILL)
+    TerminateProcess(proc, 201);
+  else
+    DebugBreakProcess(proc);
   CloseHandle(proc);
   return 1;
 #else
