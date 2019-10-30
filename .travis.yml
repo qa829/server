@@ -2,7 +2,7 @@
 # travis-ci.org definition
 
 sudo: false
-dist: xenial
+dist: bionic
 arch: s390x
 
 git:
