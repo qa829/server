@@ -138,7 +138,7 @@ addons:
       - chrpath
       - cmake
       - gdb
-      - galera-4
+      #- galera-4
       - libaio-dev
       - libboost-dev
       - libcurl3-dev
@@ -161,7 +161,7 @@ addons:
       - libjemalloc-dev
       - libsnappy-dev
       - liblzma-dev
-      - libzmq-dev
+      #- libzmq-dev
       - uuid-dev
       - ccache
 
