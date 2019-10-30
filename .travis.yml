@@ -11,8 +11,8 @@ git:
 language: cpp
 os:
   - linux
-  - osx
-osx_image: xcode10.1
+#  - osx
+#osx_image: xcode10.1
 compiler:
   - gcc
   - clang
