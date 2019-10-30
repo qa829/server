@@ -163,6 +163,7 @@ addons:
       - liblzma-dev
       - libzmq-dev
       - uuid-dev
+      - ccache
 
 # libsystemd-daemon-dev # https://github.com/travis-ci/apt-package-whitelist/issues/3882
 
